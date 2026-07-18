@@ -33,18 +33,21 @@ const EMPTY_FC: GeoJSON.FeatureCollection = {
   features: [],
 };
 
+const isFiniteCoord = (c: Camera) =>
+  Number.isFinite(c.lat) && Number.isFinite(c.lon);
+
 function camerasToFC(
   cameras: Camera[],
   highlightIds?: Set<string>,
 ): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
-    features: cameras.map((c) => ({
+    features: cameras.filter(isFiniteCoord).map((c) => ({
       type: "Feature",
       geometry: { type: "Point", coordinates: [c.lon, c.lat] },
       properties: {
         id: c.id,
-        color: BRAND_COLORS[c.brand],
+        color: BRAND_COLORS[c.brand] ?? "#ff4d4d",
         highlight: highlightIds?.has(c.id) ?? false,
       },
     })),
@@ -54,6 +57,7 @@ function camerasToFC(
 function fovToFC(cameras: Camera[]): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
   for (const c of cameras) {
+    if (!isFiniteCoord(c)) continue;
     if (c.omni) {
       // Soft ring for 360° units.
       features.push({
@@ -62,18 +66,19 @@ function fovToFC(cameras: Camera[]): GeoJSON.FeatureCollection {
           type: "Polygon",
           coordinates: [fovConePolygon({ ...c, fovHalfAngle: 180 }, 0, 40)],
         },
-        properties: { color: BRAND_COLORS[c.brand], omni: true },
+        properties: { color: BRAND_COLORS[c.brand] ?? "#ff4d4d", omni: true },
       });
       continue;
     }
     for (const dir of c.directions) {
+      if (!Number.isFinite(dir)) continue;
       features.push({
         type: "Feature",
         geometry: {
           type: "Polygon",
-          coordinates: [fovConePolygon(c, dir)],
+          coordinates: [fovConePolygon(c, dir, 80)],
         },
-        properties: { color: BRAND_COLORS[c.brand], omni: false },
+        properties: { color: BRAND_COLORS[c.brand] ?? "#ff4d4d", omni: false },
       });
     }
   }
@@ -135,7 +140,7 @@ export function MapView({
         source: FOV_SOURCE,
         paint: {
           "fill-color": ["get", "color"],
-          "fill-opacity": 0.22,
+          "fill-opacity": 0.32,
         },
       });
       map.addLayer({
@@ -144,8 +149,8 @@ export function MapView({
         source: FOV_SOURCE,
         paint: {
           "line-color": ["get", "color"],
-          "line-width": 1.5,
-          "line-opacity": 0.55,
+          "line-width": 2,
+          "line-opacity": 0.85,
         },
       });
 
@@ -297,7 +302,7 @@ export function MapView({
       didInitialCenter.current = true;
       map.easeTo({
         center: [center.lon, center.lat],
-        zoom: Math.max(map.getZoom(), 13),
+        zoom: Math.max(map.getZoom(), 14.5),
         duration: 700,
       });
     }
