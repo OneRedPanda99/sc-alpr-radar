@@ -81,6 +81,67 @@ export function CameraAlertCard({
   );
 }
 
+interface DetailProps {
+  camera: Camera;
+  distanceMeters?: number | null;
+  onClose: () => void;
+}
+
+export function CameraDetailCard({ camera, distanceMeters, onClose }: DetailProps) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const photo = !imgFailed && (camera.imageUrl || brandImage(camera.brand));
+  const title = camera.name || camera.operator || `${camera.brand} ALPR`;
+  const feet =
+    distanceMeters != null ? Math.round(metersToFeet(distanceMeters)) : null;
+
+  return (
+    <div className="detail-card">
+      <button className="detail-close" onClick={onClose} aria-label="Close">
+        ×
+      </button>
+      <div className="detail-media">
+        {photo ? (
+          <img src={photo} alt={camera.brand} onError={() => setImgFailed(true)} />
+        ) : (
+          <div className="alert-card-fallback">{camera.brand[0]}</div>
+        )}
+      </div>
+      <div className="detail-body">
+        <div className="alert-card-title">{title}</div>
+        <div className="alert-card-brand">{camera.brand}</div>
+        <div className="detail-grid">
+          <div>
+            <span className="meta-label">Facing</span>
+            <span>{formatFacing(camera.directions, camera.omni)}</span>
+          </div>
+          <div>
+            <span className="meta-label">Used for</span>
+            <span>{camera.purpose}</span>
+          </div>
+          {camera.operator && camera.operator !== camera.name && (
+            <div>
+              <span className="meta-label">Operator</span>
+              <span>{camera.operator}</span>
+            </div>
+          )}
+          {camera.zone && (
+            <div>
+              <span className="meta-label">Zone</span>
+              <span>{camera.zone}</span>
+            </div>
+          )}
+          {feet != null && (
+            <div>
+              <span className="meta-label">Distance</span>
+              <span>{feet} ft</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AllClearBanner() {
   return (
     <div className="alert-card clear">

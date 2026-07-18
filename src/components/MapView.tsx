@@ -18,6 +18,8 @@ interface MapViewProps {
   routeLine?: [number, number][] | null;
   /** When true, fit the map to the route bounds once it changes. */
   fitRoute?: boolean;
+  /** Called with a camera id when a camera dot is tapped. */
+  onSelectCamera?: (id: string) => void;
   onReady?: (map: maplibregl.Map) => void;
 }
 
@@ -102,6 +104,7 @@ export function MapView({
   showFov = true,
   routeLine,
   fitRoute = false,
+  onSelectCamera,
   onReady,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -109,6 +112,9 @@ export function MapView({
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   const readyRef = useRef(false);
   const lastFitKey = useRef("");
+  const didInitialCenter = useRef(false);
+  const onSelectCameraRef = useRef(onSelectCamera);
+  onSelectCameraRef.current = onSelectCamera;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -196,6 +202,18 @@ export function MapView({
         },
       });
 
+      map.on("click", "camera-dots", (e) => {
+        const f = e.features?.[0];
+        const id = f?.properties?.id;
+        if (id != null) onSelectCameraRef.current?.(String(id));
+      });
+      map.on("mouseenter", "camera-dots", () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", "camera-dots", () => {
+        map.getCanvas().style.cursor = "";
+      });
+
       readyRef.current = true;
       onReady?.(map);
     });
@@ -273,6 +291,14 @@ export function MapView({
         bearing: headingUp && heading != null ? heading : 0,
         duration: 500,
         zoom: Math.max(map.getZoom(), 15),
+      });
+    } else if (!didInitialCenter.current) {
+      // Browsing (not driving): center on the user once so nearby cameras are visible.
+      didInitialCenter.current = true;
+      map.easeTo({
+        center: [center.lon, center.lat],
+        zoom: Math.max(map.getZoom(), 13),
+        duration: 700,
       });
     }
   }, [center, heading, follow, headingUp]);

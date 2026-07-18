@@ -2,8 +2,12 @@ import type { Camera, CameraDataset } from "@/types";
 import { cameraFromFeatureProps, cameraFromTags } from "@/services/cameraParse";
 import { saveCameras } from "@/services/storage";
 
-const OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter";
-const OVERPASS_QUERY = `[out:json][timeout:120];
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+];
+const OVERPASS_QUERY = `[out:json][timeout:90];
 area["name"="South Carolina"]["admin_level"="4"]->.sc;
 (
   node["surveillance:type"="ALPR"](area.sc);
@@ -46,23 +50,51 @@ export async function fetchBundledDataset(
 }
 
 export async function fetchLiveDataset(): Promise<CameraDataset> {
-  const res = await fetch(OVERPASS_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `data=${encodeURIComponent(OVERPASS_QUERY)}`,
-  });
-  if (!res.ok) throw new Error(`Overpass error ${res.status}`);
-  const json = await res.json();
-  const cameras = (json.elements as OverpassElement[])
-    .filter((el) => el.lat != null && el.lon != null)
-    .map((el) =>
-      cameraFromTags(`node/${el.id}`, el.lat!, el.lon!, el.tags ?? {}),
-    );
-  return {
-    generatedAt: new Date().toISOString(),
-    count: cameras.length,
-    cameras,
-  };
+  const body = `data=${encodeURIComponent(OVERPASS_QUERY)}`;
+  let lastError = "";
+
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 100_000);
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) {
+        lastError = `${new URL(endpoint).host} returned ${res.status}`;
+        continue;
+      }
+      const json = await res.json();
+      const cameras = (json.elements as OverpassElement[])
+        .filter((el) => el.lat != null && el.lon != null)
+        .map((el) =>
+          cameraFromTags(`node/${el.id}`, el.lat!, el.lon!, el.tags ?? {}),
+        );
+      if (cameras.length === 0) {
+        lastError = "Overpass returned no cameras — try again shortly";
+        continue;
+      }
+      return {
+        generatedAt: new Date().toISOString(),
+        count: cameras.length,
+        cameras,
+      };
+    } catch (e) {
+      clearTimeout(timer);
+      lastError =
+        (e as Error).name === "AbortError"
+          ? `${new URL(endpoint).host} timed out`
+          : `${new URL(endpoint).host}: ${(e as Error).message}`;
+    }
+  }
+
+  throw new Error(
+    `Live update failed (${lastError}). Using the bundled pack still works offline.`,
+  );
 }
 
 export async function updateCameras(

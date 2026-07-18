@@ -1,0 +1,8 @@
+Browse cameras without driving, tap for details, robust live update
+
+- Idle map now one-shot centers on your location so nearby cameras are visible
+  before you start a drive (previously only showed after Start Driving)
+- Tap any camera dot to open a detail card (name, brand, facing, purpose,
+  operator, zone, distance, photo) with pointer cursor + close button
+- Make "Update cameras (live)" reliable: 3 Overpass mirrors with failover,
+  100s AbortController timeout, empty-result guard, and human-readable errors

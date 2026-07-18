@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Camera, SavedRoute } from "@/types";
 import { MapView } from "@/components/MapView";
-import { AllClearBanner, CameraAlertCard } from "@/components/CameraAlertCard";
+import {
+  AllClearBanner,
+  CameraAlertCard,
+  CameraDetailCard,
+} from "@/components/CameraAlertCard";
+import type { LatLng } from "@/types";
 import { useCameraStore } from "@/store/cameraStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useGeolocation } from "@/hooks/useGeolocation";
@@ -36,8 +41,21 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
 
   const [driving, setDriving] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [browseCenter, setBrowseCenter] = useState<LatLng | null>(null);
   const { fix, error } = useGeolocation({ enabled: driving });
   useWakeLock(driving);
+
+  // One-shot location while idle so the map opens near you and nearby cameras show.
+  useEffect(() => {
+    if (driving || browseCenter || !("geolocation" in navigator)) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) =>
+        setBrowseCenter({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 },
+    );
+  }, [driving, browseCenter]);
 
   const trackerRef = useRef(new AlertTracker());
   const [near, setNear] = useState<NearHit[]>([]);
@@ -104,8 +122,18 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
       : dataset.cameras;
   }, [dataset, flockOnly]);
 
+  const selectedCamera = useMemo(
+    () => dataset?.cameras.find((c) => c.id === selectedId) ?? null,
+    [dataset, selectedId],
+  );
+  const selectedDistance = useMemo(() => {
+    if (!selectedCamera || !fix) return null;
+    return haversineMeters(fix.point, selectedCamera);
+  }, [selectedCamera, fix]);
+
   const nearestAhead = near.find((h) => h.ahead) ?? near[0] ?? null;
   const currentStep = activeRoute?.steps?.[stepIndex] ?? null;
+  const mapCenter = fix?.point ?? browseCenter;
 
   const handleStart = async () => {
     await unlockAudio();
@@ -127,13 +155,22 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
       <MapView
         cameras={visibleCameras}
         highlightIds={highlightIds}
-        center={fix?.point ?? null}
+        center={mapCenter}
         heading={fix?.heading ?? null}
         follow={driving}
         headingUp={headingUp}
         showFov={showFov}
         routeLine={activeRoute?.coordinates ?? null}
+        onSelectCamera={setSelectedId}
       />
+
+      {selectedCamera && (
+        <CameraDetailCard
+          camera={selectedCamera}
+          distanceMeters={selectedDistance}
+          onClose={() => setSelectedId(null)}
+        />
+      )}
 
       <div className="drive-hud">
         {!driving ? (
@@ -142,7 +179,7 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
               <h1>SC ALPR Radar</h1>
               <p>
                 {status === "ready"
-                  ? `${dataset?.count ?? 0} cameras loaded · tap to start`
+                  ? `${dataset?.count ?? 0} cameras loaded · tap a dot for details, or start`
                   : "Loading camera pack…"}
               </p>
             </div>
