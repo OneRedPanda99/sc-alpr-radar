@@ -9,8 +9,7 @@ export function useWakeLock(active: boolean): void {
 
     const request = async () => {
       try {
-        // @ts-expect-error wakeLock is not in all TS lib targets
-        sentinel = await navigator.wakeLock?.request("screen");
+        sentinel = await (navigator as any).wakeLock?.request("screen");
       } catch {
         // Ignored: user can keep the display on manually.
       }

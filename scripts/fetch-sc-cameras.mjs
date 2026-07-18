@@ -18,7 +18,13 @@ const OUT = resolve(__dirname, "../public/data/sc-cameras.geojson");
 const ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ];
+
+// Overpass rejects requests without a descriptive User-Agent (HTTP 406).
+const USER_AGENT = "sc-alpr-radar/0.1 (personal DeFlock data pack; +https://deflock.me)";
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const QUERY = `[out:json][timeout:180];
 area["name"="South Carolina"]["admin_level"="4"]->.sc;
@@ -57,19 +63,28 @@ function isOmni(tags) {
 
 async function overpass() {
   let lastErr;
-  for (const endpoint of ENDPOINTS) {
-    try {
-      console.log(`Querying ${endpoint} …`);
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `data=${encodeURIComponent(QUERY)}`,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return await res.json();
-    } catch (e) {
-      console.warn(`  failed: ${e.message}`);
-      lastErr = e;
+  // A couple of passes so transient rate-limits (HTTP 429) can clear.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    for (const endpoint of ENDPOINTS) {
+      try {
+        console.log(`Querying ${endpoint} (attempt ${attempt + 1}) …`);
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": USER_AGENT,
+            Accept: "application/json",
+          },
+          body: `data=${encodeURIComponent(QUERY)}`,
+        });
+        if (res.status === 429) throw new Error("HTTP 429 (rate limited)");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+      } catch (e) {
+        console.warn(`  failed: ${e.message}`);
+        lastErr = e;
+        await sleep(3000);
+      }
     }
   }
   throw lastErr ?? new Error("All Overpass endpoints failed");

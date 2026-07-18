@@ -140,7 +140,7 @@ export function MapView({
       mapRef.current = null;
       readyRef.current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Map is initialized once; later prop changes are handled by the effects below.
   }, []);
 
   // Update camera features.
