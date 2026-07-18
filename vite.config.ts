@@ -18,13 +18,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: [
-        "favicon.svg",
-        "icon.svg",
-        "data/sc-cameras.geojson",
-        "brands/*.svg",
-        ".nojekyll",
-      ],
+      includeAssets: ["favicon.svg", "icon.svg", "brands/*.svg", ".nojekyll"],
       manifest: {
         name: "SC ALPR Radar",
         short_name: "ALPR Radar",
@@ -39,13 +33,20 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2,geojson}"],
+        // NOTE: geojson is intentionally excluded from precache. It is large and
+        // served by a CDN that can briefly 503 right after a deploy; a failed
+        // precache would abort the whole service-worker install. It is cached at
+        // runtime on first load instead (rule below), which still enables offline.
+        globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
         // Camera data + basemap tiles: cache-first so drives work offline.
         runtimeCaching: [
           {
             urlPattern: ({ url }) => url.pathname.endsWith("sc-cameras.geojson"),
             handler: "StaleWhileRevalidate",
-            options: { cacheName: "alpr-data" },
+            options: {
+              cacheName: "alpr-data",
+              cacheableResponse: { statuses: [200] },
+            },
           },
           {
             urlPattern: ({ url }) =>
