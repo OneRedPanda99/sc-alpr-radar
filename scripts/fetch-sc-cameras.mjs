@@ -23,8 +23,78 @@ const QUERY = `[out:json][timeout:180];
 area["name"="South Carolina"]["admin_level"="4"]->.sc;
 (
   node["surveillance:type"="ALPR"](area.sc);
+  node["highway"="speed_camera"](area.sc);
+  node["man_made"="surveillance"]["surveillance:zone"="traffic"](area.sc);
 );
 out body;`;
+
+function classifyKind(tags) {
+  if (tags["surveillance:type"] === "ALPR") return "alpr";
+  if (tags["highway"] === "speed_camera") return "speed";
+  return "traffic";
+}
+
+// SCDOT 511 live traffic camera feed (Iteris ATIS). Public GeoJSON, no key.
+const SC511_CAMERAS =
+  "https://sc.cdn.iteris-atis.com/geojson/icons/metadata/icons.cameras.geojson";
+
+// Travel-direction abbreviation -> approximate facing bearing (degrees).
+const DIR_TO_BEARING = {
+  N: 0,
+  NB: 0,
+  NE: 45,
+  E: 90,
+  EB: 90,
+  SE: 135,
+  S: 180,
+  SB: 180,
+  SW: 225,
+  W: 270,
+  WB: 270,
+  NW: 315,
+};
+
+async function fetchSC511() {
+  try {
+    console.log(`Querying SCDOT 511 cameras …`);
+    const res = await fetch(SC511_CAMERAS, { headers: { "User-Agent": USER_AGENT } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    const out = [];
+    for (const f of json.features ?? []) {
+      const p = f.properties ?? {};
+      const [lon, lat] = f.geometry?.coordinates ?? [];
+      if (lon == null || lat == null || p.active === false) continue;
+      const dirRaw = String(p.direction ?? "").trim().toUpperCase();
+      const bearing = DIR_TO_BEARING[dirRaw];
+      const directions = bearing == null ? [] : [bearing];
+      const route = p.route ? `${p.route} ` : "";
+      out.push({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [lon, lat] },
+        properties: {
+          id: `sc511/${p.id ?? p.guid}`,
+          kind: "traffic",
+          brand: "Other",
+          rawBrand: "SCDOT",
+          name: p.description || p.name || "SCDOT traffic camera",
+          operator: "SCDOT (511)",
+          directions,
+          omni: false,
+          zone: "traffic",
+          purpose: `SCDOT live traffic camera${route ? ` — ${route.trim()}` : ""}`,
+          imageUrl: typeof p.image_url === "string" ? p.image_url : null,
+          fovHalfAngle: 30,
+        },
+      });
+    }
+    console.log(`  SCDOT 511: ${out.length} active cameras`);
+    return out;
+  } catch (e) {
+    console.warn(`  SCDOT 511 failed: ${e.message} (skipping)`);
+    return [];
+  }
+}
 
 function normalizeBrand(raw) {
   if (!raw) return "Other";
@@ -61,9 +131,11 @@ function resolveImageUrl(tags) {
   return null;
 }
 
-function derivePurpose(brand, zone, operator, description) {
+function derivePurpose(brand, zone, operator, description, kind = "alpr") {
   const z = (zone ?? "").toLowerCase();
   const desc = (description ?? "").toLowerCase();
+  if (kind === "speed") return "Speed enforcement camera";
+  if (kind === "traffic") return "Traffic monitoring / CCTV camera";
   if (z.includes("traffic") || desc.includes("traffic")) {
     return "Traffic ALPR — scans plates of passing vehicles";
   }
@@ -132,6 +204,7 @@ async function main() {
   for (const el of elements) {
     if (el.lat == null || el.lon == null) continue;
     const tags = el.tags ?? {};
+    const kind = classifyKind(tags);
     const rawBrand =
       tags["manufacturer"] ?? tags["brand"] ?? tags["operator"] ?? tags["name"];
     const brand = normalizeBrand(rawBrand);
@@ -147,6 +220,7 @@ async function main() {
       geometry: { type: "Point", coordinates: [el.lon, el.lat] },
       properties: {
         id: `node/${el.id}`,
+        kind,
         brand,
         rawBrand: rawBrand ?? null,
         name,
@@ -154,12 +228,17 @@ async function main() {
         directions: omni ? [] : directions,
         omni,
         zone,
-        purpose: derivePurpose(brand, zone, operator, description),
+        purpose: derivePurpose(brand, zone, operator, description, kind),
         imageUrl: resolveImageUrl(tags),
         fovHalfAngle: defaultFovHalf(brand, omni),
       },
     });
   }
+
+  // Merge SCDOT 511 live traffic cameras (bundled at build; browser can't fetch
+  // them live due to missing CORS headers).
+  const sc511 = await fetchSC511();
+  features.push(...sc511);
 
   const fc = {
     type: "FeatureCollection",
@@ -173,12 +252,15 @@ async function main() {
   console.log(`Wrote ${features.length} SC ALPR cameras to ${OUT}`);
 
   const byBrand = {};
+  const byKind = {};
   let withImage = 0;
   for (const f of features) {
     const b = f.properties.brand;
     byBrand[b] = (byBrand[b] ?? 0) + 1;
+    byKind[f.properties.kind] = (byKind[f.properties.kind] ?? 0) + 1;
     if (f.properties.imageUrl) withImage++;
   }
+  console.table(byKind);
   console.table(byBrand);
   console.log(`With OSM photos: ${withImage}`);
 }

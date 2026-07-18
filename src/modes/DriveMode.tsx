@@ -36,8 +36,30 @@ interface NearHit {
 
 export function DriveMode({ activeRoute }: DriveModeProps) {
   const { grid, dataset, status } = useCameraStore();
-  const { alertDistanceFeet, muted, flockOnly, headingUp, escalate, showFov } =
-    useSettingsStore();
+  const {
+    alertDistanceFeet,
+    muted,
+    flockOnly,
+    headingUp,
+    escalate,
+    showFov,
+    showAlpr,
+    showTraffic,
+    alertTraffic,
+    basemap,
+    set: setSetting,
+  } = useSettingsStore();
+
+  const isShown = useMemo(
+    () => (c: Camera) =>
+      (c.kind === "alpr" ? showAlpr : showTraffic) &&
+      (!flockOnly || c.brand === "Flock Safety"),
+    [showAlpr, showTraffic, flockOnly],
+  );
+  const isAlertable = useMemo(
+    () => (c: Camera) => isShown(c) && (c.kind !== "traffic" || alertTraffic),
+    [isShown, alertTraffic],
+  );
 
   const [driving, setDriving] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
@@ -83,9 +105,7 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
   useEffect(() => {
     if (!driving || !fix || !grid) return;
     const hits = grid.within(fix.point, radiusMeters);
-    const filtered = hits.filter(
-      (h) => !flockOnly || h.camera.brand === "Flock Safety",
-    );
+    const filtered = hits.filter((h) => isAlertable(h.camera));
 
     const enriched: NearHit[] = filtered.map((h) => {
       const brg = bearingDeg(fix.point, h.camera);
@@ -108,7 +128,7 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
         playChirp({ intensity });
       }
     }
-  }, [driving, fix, grid, radiusMeters, muted, flockOnly, escalate]);
+  }, [driving, fix, grid, radiusMeters, muted, isAlertable, escalate]);
 
   const highlightIds = useMemo(
     () => new Set(near.filter((h) => h.ahead).map((h) => h.camera.id)),
@@ -117,10 +137,17 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
 
   const visibleCameras = useMemo(() => {
     if (!dataset) return [];
-    return flockOnly
-      ? dataset.cameras.filter((c) => c.brand === "Flock Safety")
-      : dataset.cameras;
-  }, [dataset, flockOnly]);
+    return dataset.cameras.filter(isShown);
+  }, [dataset, isShown]);
+
+  const counts = useMemo(() => {
+    const c = { alpr: 0, traffic: 0 };
+    if (dataset)
+      for (const cam of dataset.cameras)
+        if (cam.kind === "alpr") c.alpr++;
+        else c.traffic++;
+    return c;
+  }, [dataset]);
 
   const selectedCamera = useMemo(
     () => dataset?.cameras.find((c) => c.id === selectedId) ?? null,
@@ -160,9 +187,36 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
         follow={driving}
         headingUp={headingUp}
         showFov={showFov}
+        basemap={basemap}
         routeLine={activeRoute?.coordinates ?? null}
         onSelectCamera={setSelectedId}
       />
+
+      <div className="map-controls">
+        <button
+          className={`map-chip ${basemap === "satellite" ? "on" : ""}`}
+          onClick={() =>
+            setSetting("basemap", basemap === "satellite" ? "streets" : "satellite")
+          }
+          title="Toggle satellite imagery"
+        >
+          {basemap === "satellite" ? "Satellite" : "Map"}
+        </button>
+        <button
+          className={`map-chip alpr ${showAlpr ? "on" : ""}`}
+          onClick={() => setSetting("showAlpr", !showAlpr)}
+          title="Plate readers (ALPR)"
+        >
+          Plate {counts.alpr}
+        </button>
+        <button
+          className={`map-chip traffic ${showTraffic ? "on" : ""}`}
+          onClick={() => setSetting("showTraffic", !showTraffic)}
+          title="Traffic / DOT cameras"
+        >
+          Traffic {counts.traffic}
+        </button>
+      </div>
 
       {selectedCamera && (
         <CameraDetailCard

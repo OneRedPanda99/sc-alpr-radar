@@ -2,10 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Camera, LatLng } from "@/types";
-import { BRAND_COLORS } from "@/services/brand";
+import { cameraColor } from "@/services/brand";
 import { fovConePolygon } from "@/services/geo";
 
 const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
+
+// Raster satellite overlay (Esri World Imagery — free, no key).
+const SATELLITE_SOURCE = "satellite";
+const SATELLITE_TILES = [
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+];
+const SATELLITE_ATTRIB = "Imagery © Esri, Maxar, Earthstar Geographics";
 
 interface MapViewProps {
   cameras: Camera[];
@@ -15,6 +22,7 @@ interface MapViewProps {
   follow?: boolean;
   headingUp?: boolean;
   showFov?: boolean;
+  basemap?: "streets" | "satellite";
   routeLine?: [number, number][] | null;
   /** When true, fit the map to the route bounds once it changes. */
   fitRoute?: boolean;
@@ -47,7 +55,7 @@ function camerasToFC(
       geometry: { type: "Point", coordinates: [c.lon, c.lat] },
       properties: {
         id: c.id,
-        color: BRAND_COLORS[c.brand] ?? "#ff4d4d",
+        color: cameraColor(c),
         highlight: highlightIds?.has(c.id) ?? false,
       },
     })),
@@ -66,7 +74,7 @@ function fovToFC(cameras: Camera[]): GeoJSON.FeatureCollection {
           type: "Polygon",
           coordinates: [fovConePolygon({ ...c, fovHalfAngle: 180 }, 0, 40)],
         },
-        properties: { color: BRAND_COLORS[c.brand] ?? "#ff4d4d", omni: true },
+        properties: { color: cameraColor(c), omni: true },
       });
       continue;
     }
@@ -78,7 +86,7 @@ function fovToFC(cameras: Camera[]): GeoJSON.FeatureCollection {
           type: "Polygon",
           coordinates: [fovConePolygon(c, dir, 80)],
         },
-        properties: { color: BRAND_COLORS[c.brand] ?? "#ff4d4d", omni: false },
+        properties: { color: cameraColor(c), omni: false },
       });
     }
   }
@@ -107,6 +115,7 @@ export function MapView({
   follow = false,
   headingUp = false,
   showFov = true,
+  basemap = "streets",
   routeLine,
   fitRoute = false,
   onSelectCamera,
@@ -133,6 +142,21 @@ export function MapView({
     mapRef.current = map;
 
     map.on("load", () => {
+      map.addSource(SATELLITE_SOURCE, {
+        type: "raster",
+        tiles: SATELLITE_TILES,
+        tileSize: 256,
+        attribution: SATELLITE_ATTRIB,
+        maxzoom: 19,
+      });
+      map.addLayer({
+        id: "satellite",
+        type: "raster",
+        source: SATELLITE_SOURCE,
+        layout: { visibility: "none" },
+        paint: { "raster-opacity": 1 },
+      });
+
       map.addSource(FOV_SOURCE, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: "fov-fill",
@@ -249,6 +273,16 @@ export function MapView({
     if (!src) return;
     src.setData(showFov ? fovToFC(cameras) : EMPTY_FC);
   }, [cameras, showFov, ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !map.getLayer("satellite")) return;
+    map.setLayoutProperty(
+      "satellite",
+      "visibility",
+      basemap === "satellite" ? "visible" : "none",
+    );
+  }, [basemap, ready]);
 
   useEffect(() => {
     const map = mapRef.current;

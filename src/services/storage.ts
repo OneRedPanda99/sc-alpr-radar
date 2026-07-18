@@ -40,6 +40,10 @@ export const DEFAULT_SETTINGS: Settings = {
   headingUp: true,
   escalate: true,
   showFov: true,
+  showAlpr: true,
+  showTraffic: true,
+  alertTraffic: false,
+  basemap: "streets",
 };
 
 export async function loadCameras(): Promise<CameraDataset | undefined> {

@@ -45,8 +45,8 @@ export const useCameraStore = create<CameraState>((set) => ({
         dataset = await updateCameras("bundled");
       } else {
         dataset = normalizeDataset(dataset);
-        // If the pack is missing FOV/purpose metadata, prefer the newer bundle.
-        const needsUpgrade = dataset.cameras.some((c) => !c.purpose);
+        // If the pack predates purpose or camera-kind metadata, prefer the newer bundle.
+        const needsUpgrade = dataset.cameras.some((c) => !c.purpose || !c.kind);
         if (needsUpgrade) {
           dataset = await updateCameras("bundled");
         } else {

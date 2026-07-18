@@ -1,10 +1,17 @@
-import type { Brand, Camera } from "@/types";
+import type { Brand, Camera, CameraKind } from "@/types";
 import {
   defaultFovHalf,
   derivePurpose,
   normalizeBrand,
   resolveImageUrl,
 } from "@/services/brand";
+
+/** Classify an OSM node into a broad camera category. */
+export function classifyKind(tags: Record<string, string>): CameraKind {
+  if (tags["surveillance:type"] === "ALPR") return "alpr";
+  if (tags["highway"] === "speed_camera") return "speed";
+  return "traffic";
+}
 
 /** Shared parsing for Overpass elements and bundled GeoJSON properties. */
 export function cameraFromTags(
@@ -13,6 +20,7 @@ export function cameraFromTags(
   lon: number,
   tags: Record<string, string>,
 ): Camera {
+  const kind = classifyKind(tags);
   const rawBrand =
     tags["manufacturer"] ?? tags["brand"] ?? tags["operator"] ?? tags["name"];
   const brand: Brand = normalizeBrand(rawBrand);
@@ -27,6 +35,7 @@ export function cameraFromTags(
     id,
     lat,
     lon,
+    kind,
     brand,
     rawBrand,
     name,
@@ -34,7 +43,7 @@ export function cameraFromTags(
     directions: omni ? [] : directions,
     omni,
     zone,
-    purpose: derivePurpose(brand, zone, operator, description),
+    purpose: derivePurpose(brand, zone, operator, description, kind),
     imageUrl: resolveImageUrl(tags),
     fovHalfAngle: defaultFovHalf(brand, omni),
   };
@@ -47,6 +56,7 @@ export function cameraFromFeatureProps(
   p: Record<string, unknown>,
 ): Camera {
   const brand = (p.brand as Brand) ?? normalizeBrand(p.rawBrand as string);
+  const kind = (p.kind as CameraKind) ?? "alpr";
   const directions = Array.isArray(p.directions)
     ? (p.directions as number[])
     : [];
@@ -56,12 +66,13 @@ export function cameraFromFeatureProps(
   const name = (p.name as string) || undefined;
   const purpose =
     (p.purpose as string) ||
-    derivePurpose(brand, zone, operator, p.description as string);
+    derivePurpose(brand, zone, operator, p.description as string, kind);
 
   return {
     id,
     lat,
     lon,
+    kind,
     brand,
     rawBrand: (p.rawBrand as string) || undefined,
     name,

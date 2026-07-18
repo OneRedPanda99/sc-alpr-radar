@@ -16,6 +16,10 @@ function pickSettings(s: Settings): Settings {
     headingUp: s.headingUp,
     escalate: s.escalate,
     showFov: s.showFov,
+    showAlpr: s.showAlpr,
+    showTraffic: s.showTraffic,
+    alertTraffic: s.alertTraffic,
+    basemap: s.basemap,
   };
 }
 

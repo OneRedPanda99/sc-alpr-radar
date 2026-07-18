@@ -52,6 +52,11 @@ export function SettingsMode() {
           checked={s.flockOnly}
           onChange={(v) => s.set("flockOnly", v)}
         />
+        <Toggle
+          label="Also beep for traffic / DOT cameras"
+          checked={s.alertTraffic}
+          onChange={(v) => s.set("alertTraffic", v)}
+        />
         <button className="test-btn" onClick={() => playChirp({ intensity: 0.7 })}>
           Test alert sound
         </button>
@@ -59,6 +64,33 @@ export function SettingsMode() {
 
       <section className="setting-group">
         <h3>Map</h3>
+        <label className="setting">
+          <span>Basemap</span>
+          <div className="seg">
+            <button
+              className={s.basemap === "streets" ? "seg-on" : ""}
+              onClick={() => s.set("basemap", "streets")}
+            >
+              Streets
+            </button>
+            <button
+              className={s.basemap === "satellite" ? "seg-on" : ""}
+              onClick={() => s.set("basemap", "satellite")}
+            >
+              Satellite
+            </button>
+          </div>
+        </label>
+        <Toggle
+          label="Show plate readers (ALPR)"
+          checked={s.showAlpr}
+          onChange={(v) => s.set("showAlpr", v)}
+        />
+        <Toggle
+          label="Show traffic / DOT cameras"
+          checked={s.showTraffic}
+          onChange={(v) => s.set("showTraffic", v)}
+        />
         <Toggle
           label="Rotate map to heading"
           checked={s.headingUp}
@@ -133,6 +165,11 @@ export function SettingsMode() {
             OpenStreetMap
           </a>{" "}
           contributors (ODbL). Coverage is community-sourced and may be incomplete.
+          Live traffic/CCTV cameras come from{" "}
+          <a href="https://www.511sc.org" target="_blank" rel="noreferrer">
+            SCDOT 511
+          </a>
+          .
         </p>
         <p className="tip">
           <strong>100% free stack</strong> — no paid APIs or API keys. Map tiles:

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { LatLng, SavedRoute } from "@/types";
 import { MapView } from "@/components/MapView";
 import { useCameraStore } from "@/store/cameraStore";
@@ -24,7 +24,29 @@ type Place = { label: string; point: LatLng };
 export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
   const { dataset } = useCameraStore();
   const showFov = useSettingsStore((s) => s.showFov);
+  const showAlpr = useSettingsStore((s) => s.showAlpr);
+  const showTraffic = useSettingsStore((s) => s.showTraffic);
+  const flockOnly = useSettingsStore((s) => s.flockOnly);
+  const basemap = useSettingsStore((s) => s.basemap);
   const { fix } = useGeolocation({ enabled: true });
+
+  // Cameras drawn on the map (respect layer + brand filters).
+  const mapCameras = useMemo(() => {
+    if (!dataset) return [];
+    return dataset.cameras.filter(
+      (c) =>
+        (c.kind === "alpr" ? showAlpr : showTraffic) &&
+        (!flockOnly || c.brand === "Flock Safety"),
+    );
+  }, [dataset, showAlpr, showTraffic, flockOnly]);
+
+  // Route avoidance only considers plate readers (surveillance), not DOT cams.
+  const routeCameras = useMemo(() => {
+    if (!dataset) return [];
+    return dataset.cameras.filter(
+      (c) => c.kind === "alpr" && (!flockOnly || c.brand === "Flock Safety"),
+    );
+  }, [dataset, flockOnly]);
 
   const [fromQuery, setFromQuery] = useState("");
   const [toQuery, setToQuery] = useState("");
@@ -88,7 +110,7 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
     setError(null);
     setPlan(null);
     try {
-      const p = await planRoute(origin.point, destination.point, dataset.cameras);
+      const p = await planRoute(origin.point, destination.point, routeCameras);
       setPlan(p);
     } catch (e) {
       setError((e as Error).message);
@@ -119,9 +141,10 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
     <div className="mode route-mode">
       <div className="route-map">
         <MapView
-          cameras={dataset?.cameras ?? []}
+          cameras={mapCameras}
           center={from?.point ?? fix?.point ?? null}
           showFov={showFov}
+          basemap={basemap}
           routeLine={plan?.avoidance.coordinates ?? null}
           fitRoute
         />

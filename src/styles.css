@@ -73,6 +73,85 @@ body {
   line-height: 0;
 }
 
+/* Floating map layer controls (bottom-left, clear of HUD + stop button) */
+.map-controls {
+  position: absolute;
+  left: 12px;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 60%;
+}
+
+.map-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(7, 16, 28, 0.82);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.map-chip.on {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.map-chip.alpr::before,
+.map-chip.traffic::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  opacity: 0.35;
+}
+
+.map-chip.alpr::before {
+  background: #ff4d4d;
+}
+
+.map-chip.traffic::before {
+  background: #4895ef;
+}
+
+.map-chip.alpr.on::before,
+.map-chip.traffic.on::before {
+  opacity: 1;
+}
+
+/* Segmented control (settings basemap) */
+.seg {
+  display: inline-flex;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.seg button {
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.seg button.seg-on {
+  background: var(--accent, #2f80ed);
+  color: #fff;
+}
+
 /* Drive HUD */
 .drive-hud {
   position: absolute;

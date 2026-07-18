@@ -11,6 +11,8 @@ const OVERPASS_QUERY = `[out:json][timeout:90];
 area["name"="South Carolina"]["admin_level"="4"]->.sc;
 (
   node["surveillance:type"="ALPR"](area.sc);
+  node["highway"="speed_camera"](area.sc);
+  node["man_made"="surveillance"]["surveillance:zone"="traffic"](area.sc);
 );
 out body;`;
 

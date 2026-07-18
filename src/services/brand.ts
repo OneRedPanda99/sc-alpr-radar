@@ -1,4 +1,4 @@
-import type { Brand } from "@/types";
+import type { Brand, Camera, CameraKind } from "@/types";
 
 /**
  * OSM tagging for ALPRs is inconsistent (manufacturer, brand, operator,
@@ -24,6 +24,25 @@ export const BRAND_COLORS: Record<Brand, string> = {
   Neology: "#4895ef",
   Other: "#a8b3c7",
 };
+
+/** Non-ALPR category colors (ALPR keeps its brand color). */
+export const KIND_COLORS: Record<CameraKind, string> = {
+  alpr: "#ff4d4d",
+  speed: "#f2c14e",
+  traffic: "#4895ef",
+};
+
+export const KIND_LABELS: Record<CameraKind, string> = {
+  alpr: "Plate reader (ALPR)",
+  speed: "Speed camera",
+  traffic: "Traffic camera",
+};
+
+/** Map dot / cone color: ALPR uses brand color, others use category color. */
+export function cameraColor(camera: Camera): string {
+  if (camera.kind === "alpr") return BRAND_COLORS[camera.brand] ?? "#ff4d4d";
+  return KIND_COLORS[camera.kind];
+}
 
 /** Local reference illustrations shipped with the app (free, no CDN). */
 export function brandImage(brand: Brand): string {
@@ -67,9 +86,17 @@ export function derivePurpose(
   zone?: string,
   operator?: string,
   description?: string,
+  kind: CameraKind = "alpr",
 ): string {
   const z = (zone ?? "").toLowerCase();
   const desc = (description ?? "").toLowerCase();
+
+  if (kind === "speed") {
+    return "Speed enforcement camera";
+  }
+  if (kind === "traffic") {
+    return "Traffic monitoring / CCTV camera";
+  }
 
   if (z.includes("traffic") || desc.includes("traffic")) {
     return "Traffic ALPR — scans plates of passing vehicles";

@@ -6,11 +6,16 @@ export type Brand =
   | "Neology"
   | "Other";
 
+/** Broad category of camera, used for coloring, filtering and alerts. */
+export type CameraKind = "alpr" | "speed" | "traffic";
+
 export interface Camera {
   /** OSM node id (stable across syncs). */
   id: string;
   lat: number;
   lon: number;
+  /** Broad category (plate reader, speed camera, traffic/CCTV). */
+  kind: CameraKind;
   brand: Brand;
   /** Raw manufacturer/brand string from OSM. */
   rawBrand?: string;
@@ -78,4 +83,12 @@ export interface Settings {
   headingUp: boolean;
   escalate: boolean;
   showFov: boolean;
+  /** Show/hide plate readers (ALPR). */
+  showAlpr: boolean;
+  /** Show/hide traffic + speed cameras. */
+  showTraffic: boolean;
+  /** Also play alert sound for traffic/CCTV cameras (off = visual only). */
+  alertTraffic: boolean;
+  /** Basemap style key. */
+  basemap: "streets" | "satellite";
 }

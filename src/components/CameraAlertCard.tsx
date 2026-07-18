@@ -1,7 +1,17 @@
 import { useState } from "react";
 import type { Camera } from "@/types";
-import { brandImage, formatFacing } from "@/services/brand";
+import { brandImage, formatFacing, KIND_LABELS } from "@/services/brand";
 import { metersToFeet } from "@/services/geo";
+
+function subtitle(camera: Camera): string {
+  return camera.kind === "alpr" ? camera.brand : KIND_LABELS[camera.kind];
+}
+
+function cardTitle(camera: Camera): string {
+  if (camera.name) return camera.name;
+  if (camera.operator) return camera.operator;
+  return camera.kind === "alpr" ? `${camera.brand} ALPR` : KIND_LABELS[camera.kind];
+}
 
 interface Props {
   camera: Camera;
@@ -21,10 +31,7 @@ export function CameraAlertCard({
   const [imgFailed, setImgFailed] = useState(false);
   const feet = Math.round(metersToFeet(distanceMeters));
   const photo = !imgFailed && (camera.imageUrl || brandImage(camera.brand));
-  const title =
-    camera.name ||
-    camera.operator ||
-    `${camera.brand} ALPR`;
+  const title = cardTitle(camera);
 
   return (
     <div className={`alert-card ${urgency}`}>
@@ -44,7 +51,7 @@ export function CameraAlertCard({
         <div className="alert-card-top">
           <div>
             <div className="alert-card-title">{title}</div>
-            <div className="alert-card-brand">{camera.brand}</div>
+            <div className="alert-card-brand">{subtitle(camera)}</div>
           </div>
           <div className="alert-card-dist">
             {feet}
@@ -90,7 +97,7 @@ interface DetailProps {
 export function CameraDetailCard({ camera, distanceMeters, onClose }: DetailProps) {
   const [imgFailed, setImgFailed] = useState(false);
   const photo = !imgFailed && (camera.imageUrl || brandImage(camera.brand));
-  const title = camera.name || camera.operator || `${camera.brand} ALPR`;
+  const title = cardTitle(camera);
   const feet =
     distanceMeters != null ? Math.round(metersToFeet(distanceMeters)) : null;
 
@@ -108,7 +115,7 @@ export function CameraDetailCard({ camera, distanceMeters, onClose }: DetailProp
       </div>
       <div className="detail-body">
         <div className="alert-card-title">{title}</div>
-        <div className="alert-card-brand">{camera.brand}</div>
+        <div className="alert-card-brand">{subtitle(camera)}</div>
         <div className="detail-grid">
           <div>
             <span className="meta-label">Facing</span>
