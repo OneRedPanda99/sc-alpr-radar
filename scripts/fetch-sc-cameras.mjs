@@ -89,28 +89,36 @@ function defaultFovHalf(brand, omni) {
   return 40;
 }
 
+async function queryEndpoint(endpoint) {
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": USER_AGENT,
+      Accept: "application/json",
+    },
+    body: `data=${encodeURIComponent(QUERY)}`,
+  });
+  if (res.status === 429) throw new Error("HTTP 429 (rate limited)");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// Exhaust retries on the primary (freshest) server BEFORE falling back to a
+// mirror. Mirrors can lag and return a smaller, stale set, so preferring the
+// reference server matters for completeness.
 async function overpass() {
   let lastErr;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    for (const endpoint of ENDPOINTS) {
+  for (const endpoint of ENDPOINTS) {
+    const attempts = endpoint === ENDPOINTS[0] ? 4 : 2;
+    for (let attempt = 0; attempt < attempts; attempt++) {
       try {
-        console.log(`Querying ${endpoint} (attempt ${attempt + 1}) …`);
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": USER_AGENT,
-            Accept: "application/json",
-          },
-          body: `data=${encodeURIComponent(QUERY)}`,
-        });
-        if (res.status === 429) throw new Error("HTTP 429 (rate limited)");
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return await res.json();
+        console.log(`Querying ${endpoint} (attempt ${attempt + 1}/${attempts}) …`);
+        return await queryEndpoint(endpoint);
       } catch (e) {
         console.warn(`  failed: ${e.message}`);
         lastErr = e;
-        await sleep(3000);
+        await sleep(5000);
       }
     }
   }
