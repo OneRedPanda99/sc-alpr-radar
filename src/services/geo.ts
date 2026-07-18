@@ -114,14 +114,21 @@ export function fovConePolygon(
   directionDeg: number,
   rangeMeters = 55,
 ): [number, number][] {
-  const half = cam.fovHalfAngle;
+  const half =
+    Number.isFinite(cam.fovHalfAngle) && cam.fovHalfAngle > 0
+      ? cam.fovHalfAngle
+      : 35;
+  const dir = Number.isFinite(directionDeg) ? directionDeg : 0;
   const steps = Math.max(6, Math.round(half / 5));
-  const ring: [number, number][] = [[cam.lon, cam.lat]];
+  const apex: [number, number] = [cam.lon, cam.lat];
+  const ring: [number, number][] = [apex];
   for (let i = 0; i <= steps; i++) {
-    const bearing = directionDeg - half + (i / steps) * (half * 2);
+    const bearing = dir - half + (i / steps) * (half * 2);
     const p = destinationPoint(cam, rangeMeters, bearing);
-    ring.push([p.lon, p.lat]);
+    if (Number.isFinite(p.lon) && Number.isFinite(p.lat)) {
+      ring.push([p.lon, p.lat]);
+    }
   }
-  ring.push([cam.lon, cam.lat]);
+  ring.push(apex);
   return ring;
 }

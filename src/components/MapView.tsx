@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Camera, LatLng } from "@/types";
@@ -115,7 +115,7 @@ export function MapView({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
-  const readyRef = useRef(false);
+  const [ready, setReady] = useState(false);
   const lastFitKey = useRef("");
   const didInitialCenter = useRef(false);
   const onSelectCameraRef = useRef(onSelectCamera);
@@ -219,36 +219,40 @@ export function MapView({
         map.getCanvas().style.cursor = "";
       });
 
-      readyRef.current = true;
+      setReady(true);
       onReady?.(map);
     });
+
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__map = map;
+    }
 
     return () => {
       map.remove();
       mapRef.current = null;
-      readyRef.current = false;
+      setReady(false);
     };
   }, []);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !ready) return;
     const src = map.getSource(CAMERA_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
     src.setData(camerasToFC(cameras, highlightIds));
-  }, [cameras, highlightIds]);
+  }, [cameras, highlightIds, ready]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !ready) return;
     const src = map.getSource(FOV_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
     src.setData(showFov ? fovToFC(cameras) : EMPTY_FC);
-  }, [cameras, showFov]);
+  }, [cameras, showFov, ready]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
+    if (!map || !ready) return;
     const src = map.getSource(ROUTE_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
     src.setData(routeToFC(routeLine ?? null));
@@ -265,11 +269,11 @@ export function MapView({
         map.fitBounds(bounds, { padding: 56, duration: 700, maxZoom: 15 });
       }
     }
-  }, [routeLine, fitRoute]);
+  }, [routeLine, fitRoute, ready]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current || !center) return;
+    if (!map || !ready || !center) return;
 
     if (!userMarkerRef.current) {
       const el = document.createElement("div");
@@ -306,7 +310,7 @@ export function MapView({
         duration: 700,
       });
     }
-  }, [center, heading, follow, headingUp]);
+  }, [center, heading, follow, headingUp, ready]);
 
   return <div ref={containerRef} className="map-container" />;
 }
