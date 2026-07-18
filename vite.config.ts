@@ -33,6 +33,12 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Activate a new build immediately instead of waiting for all tabs to
+        // close, and drop stale precaches. Prevents users being stuck on an old
+        // version after a deploy.
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         // NOTE: geojson is intentionally excluded from precache. It is large and
         // served by a CDN that can briefly 503 right after a deploy; a failed
         // precache would abort the whole service-worker install. It is cached at
