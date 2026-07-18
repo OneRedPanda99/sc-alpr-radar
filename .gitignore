@@ -8,3 +8,5 @@ dev-dist
 .env
 .env.*
 !.env.example
+
+COMMIT_MSG.tmp
