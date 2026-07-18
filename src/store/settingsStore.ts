@@ -15,6 +15,7 @@ function pickSettings(s: Settings): Settings {
     flockOnly: s.flockOnly,
     headingUp: s.headingUp,
     escalate: s.escalate,
+    showFov: s.showFov,
   };
 }
 

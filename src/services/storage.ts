@@ -39,6 +39,7 @@ export const DEFAULT_SETTINGS: Settings = {
   flockOnly: false,
   headingUp: true,
   escalate: true,
+  showFov: true,
 };
 
 export async function loadCameras(): Promise<CameraDataset | undefined> {

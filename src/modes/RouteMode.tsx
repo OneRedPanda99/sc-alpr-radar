@@ -2,8 +2,16 @@ import { useEffect, useState } from "react";
 import type { LatLng, SavedRoute } from "@/types";
 import { MapView } from "@/components/MapView";
 import { useCameraStore } from "@/store/cameraStore";
+import { useSettingsStore } from "@/store/settingsStore";
 import { useGeolocation } from "@/hooks/useGeolocation";
-import { geocode, planRoute, planToSavedRoute, type RoutePlan } from "@/services/routing";
+import {
+  formatDistance,
+  formatDuration,
+  geocode,
+  planRoute,
+  planToSavedRoute,
+  type RoutePlan,
+} from "@/services/routing";
 import { listRoutes, saveRoute, deleteRoute } from "@/services/storage";
 
 interface RouteModeProps {
@@ -11,13 +19,19 @@ interface RouteModeProps {
   activeRouteId: string | null;
 }
 
+type Place = { label: string; point: LatLng };
+
 export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
   const { dataset } = useCameraStore();
+  const showFov = useSettingsStore((s) => s.showFov);
   const { fix } = useGeolocation({ enabled: true });
 
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<{ label: string; point: LatLng }[]>([]);
-  const [dest, setDest] = useState<{ label: string; point: LatLng } | null>(null);
+  const [fromQuery, setFromQuery] = useState("");
+  const [toQuery, setToQuery] = useState("");
+  const [from, setFrom] = useState<Place | null>(null);
+  const [to, setTo] = useState<Place | null>(null);
+  const [fromResults, setFromResults] = useState<Place[]>([]);
+  const [toResults, setToResults] = useState<Place[]>([]);
   const [plan, setPlan] = useState<RoutePlan | null>(null);
   const [saved, setSaved] = useState<SavedRoute[]>([]);
   const [busy, setBusy] = useState(false);
@@ -27,31 +41,54 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
     void listRoutes().then(setSaved);
   }, []);
 
-  const doSearch = async () => {
-    if (!query.trim()) return;
+  // Auto-fill origin from GPS when available.
+  useEffect(() => {
+    if (fix && !from) {
+      setFrom({
+        label: "Current location",
+        point: fix.point,
+      });
+      setFromQuery("Current location");
+    }
+  }, [fix, from]);
+
+  const search = async (which: "from" | "to") => {
+    const q = which === "from" ? fromQuery : toQuery;
+    if (!q.trim() || q === "Current location") return;
     setError(null);
     try {
-      setResults(await geocode(query));
+      const results = await geocode(q, fix?.point ?? from?.point);
+      if (!results.length) {
+        setError("No places found. Try a more specific address in South Carolina.");
+        return;
+      }
+      if (which === "from") setFromResults(results);
+      else setToResults(results);
     } catch (e) {
       setError((e as Error).message);
     }
   };
 
-  const doPlan = async (destination: { label: string; point: LatLng }) => {
+  const useGpsOrigin = () => {
     if (!fix) {
-      setError("Waiting for your location…");
+      setError("GPS not available yet — allow location, or search an origin address.");
       return;
     }
+    setFrom({ label: "Current location", point: fix.point });
+    setFromQuery("Current location");
+    setFromResults([]);
+  };
+
+  const doPlan = async (origin: Place, destination: Place) => {
     if (!dataset) {
       setError("Camera data not loaded yet.");
       return;
     }
     setBusy(true);
     setError(null);
-    setDest(destination);
-    setResults([]);
+    setPlan(null);
     try {
-      const p = await planRoute(fix.point, destination.point, dataset.cameras);
+      const p = await planRoute(origin.point, destination.point, dataset.cameras);
       setPlan(p);
     } catch (e) {
       setError((e as Error).message);
@@ -60,9 +97,14 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
     }
   };
 
+  // Auto-plan when both ends are set.
+  useEffect(() => {
+    if (from && to && dataset) void doPlan(from, to);
+  }, [from, to, dataset]);
+
   const doSave = async () => {
-    if (!plan || !dest || !fix) return;
-    const route = planToSavedRoute(plan, fix.point, dest.point, dest.label);
+    if (!plan || !from || !to) return;
+    const route = planToSavedRoute(plan, from.point, to.point, to.label);
     await saveRoute(route);
     setSaved(await listRoutes());
     onActivateRoute(route);
@@ -73,73 +115,115 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
     setSaved(await listRoutes());
   };
 
-  const savingMin = (s: number) => Math.round(s / 60);
-  const km = (m: number) => (m / 1000).toFixed(1);
-
   return (
     <div className="mode route-mode">
       <div className="route-map">
         <MapView
           cameras={dataset?.cameras ?? []}
-          center={fix?.point ?? null}
+          center={from?.point ?? fix?.point ?? null}
+          showFov={showFov}
           routeLine={plan?.avoidance.coordinates ?? null}
+          fitRoute
         />
       </div>
 
       <div className="route-panel">
-        <div className="search-row">
-          <input
-            className="search-input"
-            placeholder="Destination address or place"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && doSearch()}
-          />
-          <button className="search-btn" onClick={doSearch}>
-            Search
-          </button>
+        <div className="place-fields">
+          <div className="place-row">
+            <span className="place-dot origin" />
+            <input
+              className="search-input"
+              placeholder="Starting point"
+              value={fromQuery}
+              onChange={(e) => {
+                setFromQuery(e.target.value);
+                if (from?.label === "Current location") setFrom(null);
+              }}
+              onKeyDown={(e) => e.key === "Enter" && search("from")}
+            />
+            <button className="ghost-btn" onClick={useGpsOrigin} title="Use GPS">
+              GPS
+            </button>
+          </div>
+          <div className="place-row">
+            <span className="place-dot dest" />
+            <input
+              className="search-input"
+              placeholder="Destination in South Carolina"
+              value={toQuery}
+              onChange={(e) => setToQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && search("to")}
+            />
+            <button className="search-btn" onClick={() => search("to")}>
+              Go
+            </button>
+          </div>
         </div>
 
-        {results.length > 0 && (
-          <ul className="results">
-            {results.map((r, i) => (
-              <li key={i}>
-                <button onClick={() => doPlan(r)}>{r.label}</button>
-              </li>
-            ))}
-          </ul>
+        {fromResults.length > 0 && (
+          <ResultList
+            items={fromResults}
+            onPick={(p) => {
+              setFrom(p);
+              setFromQuery(p.label);
+              setFromResults([]);
+            }}
+          />
+        )}
+        {toResults.length > 0 && (
+          <ResultList
+            items={toResults}
+            onPick={(p) => {
+              setTo(p);
+              setToQuery(p.label);
+              setToResults([]);
+            }}
+          />
         )}
 
         {busy && <div className="info">Calculating routes…</div>}
         {error && <div className="hud-error">{error}</div>}
 
-        {plan && dest && (
+        {plan && to && (
           <div className="plan-card">
-            <div className="plan-dest">{dest.label}</div>
+            <div className="plan-dest">{to.label}</div>
             <div className="plan-stats">
               <Stat
                 label="Fastest"
                 value={`${plan.camerasOnFastest} cams`}
-                sub={`${km(plan.fastest.distanceMeters)} km · ${savingMin(
-                  plan.fastest.durationSeconds,
-                )} min`}
+                sub={`${formatDistance(plan.fastest.distanceMeters)} · ${formatDuration(plan.fastest.durationSeconds)}`}
               />
               <Stat
-                label="Avoidance"
+                label="Avoid cameras"
                 value={`${plan.camerasUnavoidable} cams`}
-                sub={`${km(plan.avoidance.distanceMeters)} km · ${savingMin(
-                  plan.avoidance.durationSeconds,
-                )} min`}
+                sub={`${formatDistance(plan.avoidance.distanceMeters)} · ${formatDuration(plan.avoidance.durationSeconds)}`}
                 highlight
               />
             </div>
             <div className="plan-note">
               {plan.camerasUnavoidable === 0
-                ? "This route avoids all known cameras."
-                : `${plan.camerasUnavoidable} camera(s) couldn't be avoided on this route.`}
+                ? "This route avoids all known cameras on the map."
+                : `${plan.camerasUnavoidable} camera(s) couldn't be avoided — they'll still alert in Drive.`}
             </div>
+
+            {plan.avoidance.steps.length > 0 && (
+              <ol className="directions">
+                {plan.avoidance.steps.slice(0, 12).map((s, i) => (
+                  <li key={i}>
+                    <span className="dir-text">{s.instruction}</span>
+                    <span className="dir-dist">{formatDistance(s.distanceMeters)}</span>
+                  </li>
+                ))}
+                {plan.avoidance.steps.length > 12 && (
+                  <li className="dir-more">
+                    +{plan.avoidance.steps.length - 12} more turns in Drive mode
+                  </li>
+                )}
+              </ol>
+            )}
+
             <button className="save-btn" onClick={doSave}>
-              Save &amp; use in Drive
+              Start this route in Drive
             </button>
           </div>
         )}
@@ -154,8 +238,8 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
                     <span className="saved-label">{r.destinationLabel}</span>
                     <span className="saved-sub">
                       {r.camerasUnavoidable} unavoidable ·{" "}
-                      {(r.distanceMeters / 1000).toFixed(1)} km ·{" "}
-                      {Math.round(r.durationSeconds / 60)} min
+                      {formatDistance(r.distanceMeters)} ·{" "}
+                      {formatDuration(r.durationSeconds)}
                     </span>
                   </button>
                   <button className="saved-del" onClick={() => doDelete(r.id)}>
@@ -168,6 +252,24 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
         )}
       </div>
     </div>
+  );
+}
+
+function ResultList({
+  items,
+  onPick,
+}: {
+  items: Place[];
+  onPick: (p: Place) => void;
+}) {
+  return (
+    <ul className="results">
+      {items.map((r, i) => (
+        <li key={i}>
+          <button onClick={() => onPick(r)}>{r.label}</button>
+        </li>
+      ))}
+    </ul>
   );
 }
 

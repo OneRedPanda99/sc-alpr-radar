@@ -17,10 +17,104 @@ export function normalizeBrand(raw?: string | null): Brand {
 }
 
 export const BRAND_COLORS: Record<Brand, string> = {
-  "Flock Safety": "#ff3b3b",
+  "Flock Safety": "#ff4d4d",
   Motorola: "#ff9f1c",
   Genetec: "#2ec4b6",
   Leonardo: "#9b5de5",
   Neology: "#4895ef",
-  Other: "#c0c0c0",
+  Other: "#a8b3c7",
 };
+
+/** Local reference illustrations shipped with the app (free, no CDN). */
+export function brandImage(brand: Brand): string {
+  const file = brand.replace(/\s+/g, "-").toLowerCase();
+  return `${import.meta.env.BASE_URL}brands/${file}.svg`;
+}
+
+const CARDINAL = [
+  "N",
+  "NNE",
+  "NE",
+  "ENE",
+  "E",
+  "ESE",
+  "SE",
+  "SSE",
+  "S",
+  "SSW",
+  "SW",
+  "WSW",
+  "W",
+  "WNW",
+  "NW",
+  "NNW",
+];
+
+export function formatFacing(directions: number[], omni: boolean): string {
+  if (omni || directions.includes(360)) return "360° (all directions)";
+  if (!directions.length) return "Direction unknown";
+  return directions
+    .map((d) => {
+      const idx = Math.round((((d % 360) + 360) % 360) / 22.5) % 16;
+      return `${Math.round(d)}° ${CARDINAL[idx]}`;
+    })
+    .join(" · ");
+}
+
+/** Derive a plain-English "what it's used for" line. */
+export function derivePurpose(
+  brand: Brand,
+  zone?: string,
+  operator?: string,
+  description?: string,
+): string {
+  const z = (zone ?? "").toLowerCase();
+  const desc = (description ?? "").toLowerCase();
+
+  if (z.includes("traffic") || desc.includes("traffic")) {
+    return "Traffic ALPR — scans plates of passing vehicles";
+  }
+  if (z.includes("parking") || desc.includes("parking")) {
+    return "Parking enforcement / lot monitoring";
+  }
+  if (operator?.toLowerCase().includes("hoa") || desc.includes("hoa")) {
+    return "Neighborhood / HOA ALPR surveillance";
+  }
+  if (brand === "Flock Safety") {
+    return "Automated license plate reader (Flock Safety network)";
+  }
+  if (brand === "Motorola") {
+    return "Law-enforcement ALPR (Motorola / Vigilant)";
+  }
+  if (brand === "Genetec") {
+    return "Security ALPR (Genetec AutoVu)";
+  }
+  if (brand === "Leonardo") {
+    return "Law-enforcement ALPR (Leonardo / ELSAG)";
+  }
+  if (brand === "Neology") {
+    return "Toll / enforcement ALPR (Neology)";
+  }
+  return "Automated license plate reader";
+}
+
+/** Typical half-angle for ALPR FOV cones (full cone ≈ 60–80°). */
+export function defaultFovHalf(brand: Brand, omni: boolean): number {
+  if (omni) return 180;
+  if (brand === "Flock Safety") return 35;
+  return 40;
+}
+
+export function resolveImageUrl(tags: Record<string, string>): string | undefined {
+  if (tags.image) {
+    const img = tags.image.trim();
+    if (img.startsWith("http")) return img;
+  }
+  const wiki = tags.wikimedia_commons?.trim();
+  if (wiki) {
+    // File:Name.jpg → special redirect that serves the file
+    const file = wiki.replace(/^File:/i, "").replace(/ /g, "_");
+    return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(file)}?width=480`;
+  }
+  return undefined;
+}

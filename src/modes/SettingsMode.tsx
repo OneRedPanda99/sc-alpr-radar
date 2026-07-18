@@ -64,6 +64,11 @@ export function SettingsMode() {
           checked={s.headingUp}
           onChange={(v) => s.set("headingUp", v)}
         />
+        <Toggle
+          label="Show camera field-of-view cones"
+          checked={s.showFov}
+          onChange={(v) => s.set("showFov", v)}
+        />
       </section>
 
       <section className="setting-group">
@@ -127,12 +132,16 @@ export function SettingsMode() {
           <a href="https://www.openstreetmap.org" target="_blank" rel="noreferrer">
             OpenStreetMap
           </a>{" "}
-          contributors, licensed ODbL. Coverage is community-sourced and may be
-          incomplete or out of date.
+          contributors (ODbL). Coverage is community-sourced and may be incomplete.
+        </p>
+        <p className="tip">
+          <strong>100% free stack</strong> — no paid APIs or API keys. Map tiles:
+          OpenFreeMap. Routing: public OSRM. Search: Photon (Komoot). Data: OSM /
+          Overpass.
         </p>
         <p className="tip">
           Personal awareness tool. It does not alter, obscure, or interfere with
-          any camera or your plate. Follow all traffic laws and drive attentively.
+          any camera or your plate. Follow traffic laws and drive attentively.
         </p>
       </section>
     </div>

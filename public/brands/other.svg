@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <rect width="200" height="200" rx="24" fill="#1a2233"/>
+  <rect x="62" y="45" width="76" height="58" rx="10" fill="#a8b3c7"/>
+  <rect x="74" y="55" width="52" height="38" rx="5" fill="#0b1220"/>
+  <circle cx="100" cy="74" r="10" fill="#56ccf2"/>
+  <rect x="90" y="103" width="20" height="38" rx="3" fill="#3a4660"/>
+  <text x="100" y="175" text-anchor="middle" fill="#8b9bb4" font-family="system-ui,sans-serif" font-size="13" font-weight="700">ALPR</text>
+</svg>

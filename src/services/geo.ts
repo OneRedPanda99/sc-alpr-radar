@@ -64,11 +64,13 @@ export class CameraGrid {
 
   /** All cameras within radiusMeters of the point. */
   within(point: LatLng, radiusMeters: number): { camera: Camera; distance: number }[] {
+    // Expand cell ring if the alert radius is large relative to cell size.
+    const ring = Math.max(1, Math.ceil(radiusMeters / (this.cell * 111320)) + 1);
     const r = Math.floor(point.lat / this.cell);
     const c = Math.floor(point.lon / this.cell);
     const out: { camera: Camera; distance: number }[] = [];
-    for (let dr = -1; dr <= 1; dr++) {
-      for (let dc = -1; dc <= 1; dc++) {
+    for (let dr = -ring; dr <= ring; dr++) {
+      for (let dc = -ring; dc <= ring; dc++) {
         const arr = this.buckets.get(`${r + dr}:${c + dc}`);
         if (!arr) continue;
         for (const camera of arr) {
@@ -80,4 +82,46 @@ export class CameraGrid {
     out.sort((a, b) => a.distance - b.distance);
     return out;
   }
+}
+
+/** Destination point a given distance and bearing from origin. */
+export function destinationPoint(
+  origin: LatLng,
+  distanceMeters: number,
+  bearingDegrees: number,
+): LatLng {
+  const δ = distanceMeters / EARTH_RADIUS_M;
+  const θ = toRad(bearingDegrees);
+  const φ1 = toRad(origin.lat);
+  const λ1 = toRad(origin.lon);
+  const sinφ1 = Math.sin(φ1);
+  const cosφ1 = Math.cos(φ1);
+  const sinδ = Math.sin(δ);
+  const cosδ = Math.cos(δ);
+  const φ2 = Math.asin(sinφ1 * cosδ + cosφ1 * sinδ * Math.cos(θ));
+  const λ2 =
+    λ1 +
+    Math.atan2(Math.sin(θ) * sinδ * cosφ1, cosδ - sinφ1 * Math.sin(φ2));
+  return { lat: toDeg(φ2), lon: ((toDeg(λ2) + 540) % 360) - 180 };
+}
+
+/**
+ * Build a DeFlock-style FOV wedge (Polygon) for one camera direction.
+ * Returns [lon, lat] ring. Range is short so it reads as "looking at" nearby road.
+ */
+export function fovConePolygon(
+  cam: Camera,
+  directionDeg: number,
+  rangeMeters = 55,
+): [number, number][] {
+  const half = cam.fovHalfAngle;
+  const steps = Math.max(6, Math.round(half / 5));
+  const ring: [number, number][] = [[cam.lon, cam.lat]];
+  for (let i = 0; i <= steps; i++) {
+    const bearing = directionDeg - half + (i / steps) * (half * 2);
+    const p = destinationPoint(cam, rangeMeters, bearing);
+    ring.push([p.lon, p.lat]);
+  }
+  ring.push([cam.lon, cam.lat]);
+  return ring;
 }

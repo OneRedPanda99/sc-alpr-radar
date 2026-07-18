@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <rect width="200" height="200" rx="24" fill="#1a2233"/>
+  <rect x="48" y="48" width="104" height="52" rx="8" fill="#4895ef"/>
+  <rect x="60" y="58" width="80" height="32" rx="4" fill="#0b1220"/>
+  <rect x="70" y="66" width="60" height="16" rx="2" fill="#2a3348"/>
+  <rect x="90" y="100" width="20" height="40" rx="3" fill="#3a4660"/>
+  <text x="100" y="175" text-anchor="middle" fill="#8b9bb4" font-family="system-ui,sans-serif" font-size="13" font-weight="700">NEOLOGY</text>
+</svg>

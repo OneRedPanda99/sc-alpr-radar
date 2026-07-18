@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Camera, SavedRoute } from "@/types";
 import { MapView } from "@/components/MapView";
+import { AllClearBanner, CameraAlertCard } from "@/components/CameraAlertCard";
 import { useCameraStore } from "@/store/cameraStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useGeolocation } from "@/hooks/useGeolocation";
@@ -14,8 +15,9 @@ import {
   bearingDeg,
   bearingDelta,
   feetToMeters,
-  metersToFeet,
+  haversineMeters,
 } from "@/services/geo";
+import { formatDistance, formatDuration } from "@/services/routing";
 
 interface DriveModeProps {
   activeRoute: SavedRoute | null;
@@ -29,10 +31,11 @@ interface NearHit {
 
 export function DriveMode({ activeRoute }: DriveModeProps) {
   const { grid, dataset, status } = useCameraStore();
-  const { alertDistanceFeet, muted, flockOnly, headingUp, escalate } =
+  const { alertDistanceFeet, muted, flockOnly, headingUp, escalate, showFov } =
     useSettingsStore();
 
   const [driving, setDriving] = useState(false);
+  const [stepIndex, setStepIndex] = useState(0);
   const { fix, error } = useGeolocation({ enabled: driving });
   useWakeLock(driving);
 
@@ -41,11 +44,27 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
 
   const radiusMeters = feetToMeters(alertDistanceFeet);
 
-  // Proximity scan on each GPS fix.
+  // Advance turn-by-turn as you pass each maneuver point.
+  useEffect(() => {
+    if (!driving || !fix || !activeRoute?.steps?.length) return;
+    const steps = activeRoute.steps;
+    let next = stepIndex;
+    for (let i = stepIndex; i < steps.length - 1; i++) {
+      const [lon, lat] = steps[i].location;
+      const dist = haversineMeters(fix.point, { lat, lon });
+      if (dist < 40) next = i + 1;
+      else break;
+    }
+    if (next !== stepIndex) setStepIndex(next);
+  }, [driving, fix, activeRoute, stepIndex]);
+
+  useEffect(() => {
+    setStepIndex(0);
+  }, [activeRoute?.id]);
+
   useEffect(() => {
     if (!driving || !fix || !grid) return;
     const hits = grid.within(fix.point, radiusMeters);
-
     const filtered = hits.filter(
       (h) => !flockOnly || h.camera.brand === "Flock Safety",
     );
@@ -53,14 +72,13 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
     const enriched: NearHit[] = filtered.map((h) => {
       const brg = bearingDeg(fix.point, h.camera);
       const ahead =
-        fix.heading == null ? true : bearingDelta(fix.heading, brg) <= 75;
+        fix.heading == null ? true : bearingDelta(fix.heading, brg) <= 80;
       return { camera: h.camera, distance: h.distance, ahead };
     });
 
     setNear(enriched);
 
     if (!muted) {
-      // Only alert for cameras ahead of travel; nearest first.
       const aheadIds = enriched.filter((h) => h.ahead).map((h) => h.camera.id);
       const fresh = trackerRef.current.update(aheadIds);
       if (fresh.length > 0) {
@@ -68,7 +86,7 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
         const intensity =
           nearest && escalate
             ? 1 - Math.min(1, nearest.distance / radiusMeters)
-            : 0.4;
+            : 0.45;
         playChirp({ intensity });
       }
     }
@@ -87,12 +105,22 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
   }, [dataset, flockOnly]);
 
   const nearestAhead = near.find((h) => h.ahead) ?? near[0] ?? null;
+  const currentStep = activeRoute?.steps?.[stepIndex] ?? null;
 
   const handleStart = async () => {
     await unlockAudio();
     trackerRef.current.reset();
     setDriving(true);
   };
+
+  const urgency =
+    !nearestAhead
+      ? "cool"
+      : nearestAhead.distance / radiusMeters < 0.35
+        ? "hot"
+        : nearestAhead.distance / radiusMeters < 0.65
+          ? "warm"
+          : "cool";
 
   return (
     <div className="mode drive-mode">
@@ -103,24 +131,53 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
         heading={fix?.heading ?? null}
         follow={driving}
         headingUp={headingUp}
+        showFov={showFov}
         routeLine={activeRoute?.coordinates ?? null}
       />
 
       <div className="drive-hud">
         {!driving ? (
-          <button className="big-btn" onClick={handleStart} disabled={status !== "ready"}>
-            {status === "ready" ? "Start Driving" : "Loading cameras…"}
-          </button>
+          <div className="start-panel">
+            <div className="start-copy">
+              <h1>SC ALPR Radar</h1>
+              <p>
+                {status === "ready"
+                  ? `${dataset?.count ?? 0} cameras loaded · tap to start`
+                  : "Loading camera pack…"}
+              </p>
+            </div>
+            <button
+              className="big-btn"
+              onClick={handleStart}
+              disabled={status !== "ready"}
+            >
+              Start Driving
+            </button>
+          </div>
+        ) : nearestAhead ? (
+          <CameraAlertCard
+            camera={nearestAhead.camera}
+            distanceMeters={nearestAhead.distance}
+            ahead={nearestAhead.ahead}
+            muted={muted}
+            urgency={urgency}
+          />
         ) : (
-          <NearestBanner hit={nearestAhead} radiusMeters={radiusMeters} muted={muted} />
+          <AllClearBanner />
+        )}
+
+        {driving && currentStep && (
+          <div className="nav-banner">
+            <div className="nav-instruction">{currentStep.instruction}</div>
+            <div className="nav-sub">
+              {formatDistance(currentStep.distanceMeters)}
+              {activeRoute &&
+                ` · ${formatDuration(activeRoute.durationSeconds)} total · ${activeRoute.camerasUnavoidable} unavoidable`}
+            </div>
+          </div>
         )}
 
         {error && driving && <div className="hud-error">GPS: {error}</div>}
-        {activeRoute && (
-          <div className="hud-route">
-            Route active · {activeRoute.camerasUnavoidable} unavoidable
-          </div>
-        )}
       </div>
 
       {driving && (
@@ -128,42 +185,6 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
           Stop
         </button>
       )}
-    </div>
-  );
-}
-
-function NearestBanner({
-  hit,
-  radiusMeters,
-  muted,
-}: {
-  hit: NearHit | null;
-  radiusMeters: number;
-  muted: boolean;
-}) {
-  if (!hit) {
-    return (
-      <div className="nearest none">
-        <span className="nearest-label">All clear</span>
-        <span className="nearest-sub">No cameras within range</span>
-      </div>
-    );
-  }
-  const feet = Math.round(metersToFeet(hit.distance));
-  const pct = Math.max(0, Math.min(1, 1 - hit.distance / radiusMeters));
-  return (
-    <div className={`nearest ${pct > 0.6 ? "hot" : pct > 0.3 ? "warm" : "cool"}`}>
-      <div className="nearest-row">
-        <span className="nearest-label">
-          {hit.camera.brand}
-          {muted ? " (muted)" : ""}
-        </span>
-        <span className="nearest-dist">{feet} ft</span>
-      </div>
-      <div className="nearest-bar">
-        <div className="nearest-bar-fill" style={{ width: `${pct * 100}%` }} />
-      </div>
-      <span className="nearest-sub">{hit.ahead ? "Ahead" : "Nearby"}</span>
     </div>
   );
 }

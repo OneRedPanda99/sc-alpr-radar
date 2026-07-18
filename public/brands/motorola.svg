@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <rect width="200" height="200" rx="24" fill="#1a2233"/>
+  <rect x="55" y="40" width="90" height="70" rx="10" fill="#ff9f1c"/>
+  <rect x="68" y="52" width="64" height="46" rx="6" fill="#0b1220"/>
+  <circle cx="100" cy="75" r="12" fill="#2a3348"/>
+  <circle cx="100" cy="75" r="5" fill="#56ccf2"/>
+  <rect x="85" y="110" width="30" height="40" rx="4" fill="#3a4660"/>
+  <text x="100" y="175" text-anchor="middle" fill="#8b9bb4" font-family="system-ui,sans-serif" font-size="13" font-weight="700">MOTOROLA</text>
+</svg>

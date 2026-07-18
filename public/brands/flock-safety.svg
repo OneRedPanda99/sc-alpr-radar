@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <rect width="200" height="200" rx="24" fill="#1a2233"/>
+  <rect x="78" y="28" width="44" height="110" rx="10" fill="#2a3348"/>
+  <rect x="70" y="36" width="60" height="48" rx="8" fill="#ff4d4d"/>
+  <circle cx="100" cy="60" r="14" fill="#0b1220"/>
+  <circle cx="100" cy="60" r="7" fill="#56ccf2"/>
+  <rect x="88" y="90" width="24" height="36" rx="4" fill="#3a4660"/>
+  <rect x="60" y="138" width="80" height="10" rx="3" fill="#2a3348"/>
+  <text x="100" y="175" text-anchor="middle" fill="#8b9bb4" font-family="system-ui,sans-serif" font-size="14" font-weight="700">FLOCK</text>
+</svg>

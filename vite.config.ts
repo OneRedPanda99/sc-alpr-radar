@@ -18,7 +18,13 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.svg", "icon.svg", "data/sc-cameras.geojson"],
+      includeAssets: [
+        "favicon.svg",
+        "icon.svg",
+        "data/sc-cameras.geojson",
+        "brands/*.svg",
+        ".nojekyll",
+      ],
       manifest: {
         name: "SC ALPR Radar",
         short_name: "ALPR Radar",

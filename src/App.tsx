@@ -47,7 +47,7 @@ export default function App() {
         />
       </nav>
 
-      {activeRoute && (
+      {activeRoute && mode === "drive" && (
         <button className="clear-route" onClick={() => setActiveRoute(null)}>
           Clear route
         </button>
