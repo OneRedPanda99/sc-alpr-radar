@@ -5,6 +5,7 @@ import { useCameraStore } from "@/store/cameraStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useGeolocation } from "@/hooks/useGeolocation";
 import {
+  camerasNearRoute,
   formatDistance,
   formatDuration,
   geocode,
@@ -186,11 +187,20 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
         ? toResults
         : [];
 
+  // Cameras still on the avoidance path (highlighted on the map).
+  const highlightIds = useMemo(() => {
+    if (!plan) return undefined;
+    return new Set(
+      camerasNearRoute(plan.avoidance.coordinates, routeCameras).map((c) => c.id),
+    );
+  }, [plan, routeCameras]);
+
   return (
     <div className="mode route-mode">
       <div className={`route-map ${panelOpen ? "with-panel" : "full"}`}>
         <MapView
           cameras={mapCameras}
+          highlightIds={highlightIds}
           center={from?.point ?? fix?.point ?? null}
           showFov={showFov}
           basemap={basemap}
@@ -288,7 +298,11 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
             />
           )}
 
-          {busy && <div className="info">Calculating routes…</div>}
+          {busy && (
+            <div className="info">
+              Finding a camera-avoiding route (trying detours)…
+            </div>
+          )}
           {error && <div className="hud-error">{error}</div>}
 
           {plan && to && (
@@ -311,8 +325,10 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
               </div>
               <div className="plan-note">
                 {plan.camerasUnavoidable === 0
-                  ? "Avoidance route clears all known plate readers."
-                  : `${plan.camerasUnavoidable} plate reader(s) still on the avoidance route — Drive will alert for them.`}
+                  ? "Avoidance route clears the cameras we can route around."
+                  : plan.camerasUnavoidable < plan.camerasOnFastest
+                    ? `Detoured some cameras — ${plan.camerasUnavoidable} still on this path (highlighted). Drive will alert for them.`
+                    : `${plan.camerasUnavoidable} camera(s) couldn't be avoided on any detour tried — they're highlighted on the map.`}
               </div>
 
               {plan.avoidance.steps.length > 0 && (

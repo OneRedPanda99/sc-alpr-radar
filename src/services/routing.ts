@@ -1,17 +1,28 @@
 import type { Camera, LatLng, RouteStep, SavedRoute } from "@/types";
-import { haversineMeters, feetToMeters } from "@/services/geo";
+import {
+  bearingDeg,
+  destinationPoint,
+  feetToMeters,
+  haversineMeters,
+} from "@/services/geo";
 
 /**
  * Free routing stack (no API keys / no paid services):
  *  - Geocode: Photon (Komoot) — CORS-friendly, OSM-based
  *  - Directions: public OSRM demo — geometries + turn-by-turn steps
  *
- * Avoidance = pick the OSRM alternative with the fewest cameras in a corridor.
+ * Avoidance: score OSRM alternatives, then actively detour around cameras on
+ * the best path by injecting via-points offset from each camera and re-routing.
  */
 
 const OSRM_BASE = "https://router.project-osrm.org/route/v1/driving";
 const PHOTON_BASE = "https://photon.komoot.io/api/";
-const CORRIDOR_METERS = feetToMeters(280);
+/** How close a camera must be to the path to "count" (~400 ft). */
+const CORRIDOR_METERS = feetToMeters(400);
+/** Max cameras we'll try to steer around in one plan. */
+const MAX_DETOUR_CAMERAS = 5;
+/** Max via-point detour requests (keeps public OSRM happy). */
+const MAX_DETOUR_REQUESTS = 16;
 
 // Rough SC bias for Photon results.
 const SC_CENTER = { lat: 33.8361, lon: -81.1637 };
@@ -170,11 +181,17 @@ function extractSteps(route: OsrmRoute): RouteStep[] {
   return steps;
 }
 
-async function fetchOsrm(origin: LatLng, destination: LatLng): Promise<OsrmRoute[]> {
-  const coords = `${origin.lon},${origin.lat};${destination.lon},${destination.lat}`;
+async function fetchOsrmWaypoints(
+  points: LatLng[],
+  alternatives: boolean,
+): Promise<OsrmRoute[]> {
+  if (points.length < 2) return [];
+  const coords = points.map((p) => `${p.lon},${p.lat}`).join(";");
   const url =
     `${OSRM_BASE}/${coords}` +
-    `?overview=full&geometries=geojson&alternatives=true&steps=true&continue_straight=true`;
+    `?overview=full&geometries=geojson&steps=true` +
+    `&alternatives=${alternatives ? "true" : "false"}` +
+    `&continue_straight=true`;
 
   const res = await fetch(url);
   if (!res.ok) {
@@ -184,11 +201,99 @@ async function fetchOsrm(origin: LatLng, destination: LatLng): Promise<OsrmRoute
   }
   const json = await res.json();
   if (json.code !== "Ok" || !json.routes?.length) {
-    throw new Error(
-      "No driving route found between those points. Try a more specific address.",
-    );
+    return [];
   }
   return json.routes as OsrmRoute[];
+}
+
+function scoreRoute(route: OsrmRoute, cameras: Camera[]): ScoredRoute {
+  return {
+    coordinates: route.geometry.coordinates,
+    distanceMeters: route.distance,
+    durationSeconds: route.duration,
+    cameraCount: camerasNearRoute(route.geometry.coordinates, cameras).length,
+    steps: extractSteps(route),
+  };
+}
+
+function pickBest(scored: ScoredRoute[]): ScoredRoute {
+  return [...scored].sort(
+    (a, b) =>
+      a.cameraCount - b.cameraCount ||
+      a.durationSeconds - b.durationSeconds ||
+      a.distanceMeters - b.distanceMeters,
+  )[0];
+}
+
+/** Bearing of the route segment nearest to a camera. */
+function routeBearingNear(
+  coordinates: [number, number][],
+  camera: Camera,
+): number {
+  let best = Infinity;
+  let bearing = 0;
+  for (let i = 1; i < coordinates.length; i++) {
+    const a = { lat: coordinates[i - 1][1], lon: coordinates[i - 1][0] };
+    const b = { lat: coordinates[i][1], lon: coordinates[i][0] };
+    const d = distanceToSegment(camera, a, b);
+    if (d < best) {
+      best = d;
+      bearing = bearingDeg(a, b);
+    }
+  }
+  return bearing;
+}
+
+/** Spread cameras along the route so we don't detour the same cluster twice. */
+function pickDetourTargets(
+  coordinates: [number, number][],
+  cameras: Camera[],
+): Camera[] {
+  const onRoute = camerasNearRoute(coordinates, cameras);
+  if (!onRoute.length) return [];
+
+  // Order by progress along the route (nearest path vertex index).
+  const ranked = onRoute
+    .map((cam) => {
+      let bestI = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < coordinates.length; i++) {
+        const d = haversineMeters(cam, {
+          lat: coordinates[i][1],
+          lon: coordinates[i][0],
+        });
+        if (d < bestD) {
+          bestD = d;
+          bestI = i;
+        }
+      }
+      return { cam, bestI };
+    })
+    .sort((a, b) => a.bestI - b.bestI);
+
+  const picked: Camera[] = [];
+  for (const { cam } of ranked) {
+    if (picked.length >= MAX_DETOUR_CAMERAS) break;
+    const tooClose = picked.some((p) => haversineMeters(p, cam) < 250);
+    if (!tooClose) picked.push(cam);
+  }
+  return picked;
+}
+
+/** Via points that try to send the driver around a camera. */
+function detourVias(camera: Camera, routeBearing: number): LatLng[] {
+  const left = (routeBearing + 270) % 360;
+  const right = (routeBearing + 90) % 360;
+  const diagL = (routeBearing + 225) % 360;
+  const diagR = (routeBearing + 135) % 360;
+  return [
+    destinationPoint(camera, 450, left),
+    destinationPoint(camera, 450, right),
+    destinationPoint(camera, 750, left),
+    destinationPoint(camera, 750, right),
+    destinationPoint(camera, 550, diagL),
+    destinationPoint(camera, 550, diagR),
+  ];
 }
 
 export interface RoutePlan {
@@ -208,21 +313,80 @@ export async function planRoute(
     throw new Error("Origin and destination are too close together.");
   }
 
-  const routes = await fetchOsrm(origin, destination);
+  const baseRoutes = await fetchOsrmWaypoints([origin, destination], true);
+  if (!baseRoutes.length) {
+    throw new Error(
+      "No driving route found between those points. Try a more specific address.",
+    );
+  }
 
-  const scored: ScoredRoute[] = routes.map((r) => ({
-    coordinates: r.geometry.coordinates,
-    distanceMeters: r.distance,
-    durationSeconds: r.duration,
-    cameraCount: camerasNearRoute(r.geometry.coordinates, cameras).length,
-    steps: extractSteps(r),
-  }));
+  const candidates: ScoredRoute[] = baseRoutes.map((r) => scoreRoute(r, cameras));
+  const fastest = candidates[0];
+  let avoidance = pickBest(candidates);
 
-  const fastest = scored[0];
-  const avoidance = [...scored].sort(
-    (a, b) =>
-      a.cameraCount - b.cameraCount || a.durationSeconds - b.durationSeconds,
-  )[0];
+  // Actively steer around cameras still on the best path.
+  if (avoidance.cameraCount > 0 && cameras.length > 0) {
+    const targets = pickDetourTargets(avoidance.coordinates, cameras);
+    let requests = 0;
+
+    for (const cam of targets) {
+      if (avoidance.cameraCount === 0 || requests >= MAX_DETOUR_REQUESTS) break;
+      const bearing = routeBearingNear(avoidance.coordinates, cam);
+      const vias = detourVias(cam, bearing);
+
+      for (const via of vias) {
+        if (requests >= MAX_DETOUR_REQUESTS) break;
+        // Skip vias that land too close to origin/dest (useless).
+        if (haversineMeters(via, origin) < 120) continue;
+        if (haversineMeters(via, destination) < 120) continue;
+        requests++;
+        try {
+          const detours = await fetchOsrmWaypoints(
+            [origin, via, destination],
+            false,
+          );
+          for (const r of detours) {
+            const scored = scoreRoute(r, cameras);
+            // Reject absurdly long detours (>2.5× fastest duration).
+            if (scored.durationSeconds > fastest.durationSeconds * 2.5) continue;
+            candidates.push(scored);
+          }
+        } catch {
+          // Ignore individual detour failures; keep what we have.
+        }
+      }
+
+      avoidance = pickBest(candidates);
+    }
+
+    // Second pass: if still cameras left, try a two-via detour around the
+    // first two remaining targets (left of first + right of second).
+    if (avoidance.cameraCount > 0 && requests < MAX_DETOUR_REQUESTS) {
+      const remaining = pickDetourTargets(avoidance.coordinates, cameras);
+      if (remaining.length >= 2) {
+        const b0 = routeBearingNear(avoidance.coordinates, remaining[0]);
+        const b1 = routeBearingNear(avoidance.coordinates, remaining[1]);
+        const viaA = destinationPoint(remaining[0], 600, (b0 + 270) % 360);
+        const viaB = destinationPoint(remaining[1], 600, (b1 + 90) % 360);
+        try {
+          const detours = await fetchOsrmWaypoints(
+            [origin, viaA, viaB, destination],
+            false,
+          );
+          for (const r of detours) {
+            const scored = scoreRoute(r, cameras);
+            if (scored.durationSeconds > fastest.durationSeconds * 2.8) continue;
+            candidates.push(scored);
+          }
+          avoidance = pickBest(candidates);
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+  avoidance = pickBest(candidates);
 
   return {
     fastest,
