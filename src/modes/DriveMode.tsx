@@ -14,7 +14,7 @@ import { useGeolocation } from "@/hooks/useGeolocation";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import {
   AlertTracker,
-  playChirp,
+  playAlert,
   unlockAudio,
 } from "@/services/alertEngine";
 import {
@@ -48,6 +48,7 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
     showAlpr,
     showTraffic,
     alertTraffic,
+    alertSound,
     basemap,
     set: setSetting,
   } = useSettingsStore();
@@ -130,10 +131,19 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
           nearest && escalate
             ? 1 - Math.min(1, nearest.distance / radiusMeters)
             : 0.45;
-        playChirp({ intensity });
+        playAlert({ intensity, sound: alertSound });
       }
     }
-  }, [driving, fix, grid, radiusMeters, muted, isAlertable, escalate]);
+  }, [
+    driving,
+    fix,
+    grid,
+    radiusMeters,
+    muted,
+    isAlertable,
+    escalate,
+    alertSound,
+  ]);
 
   const highlightIds = useMemo(
     () => new Set(near.filter((h) => h.ahead).map((h) => h.camera.id)),

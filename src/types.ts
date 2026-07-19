@@ -78,6 +78,15 @@ export interface SavedRoute {
 
 export type AppMode = "drive" | "route" | "settings";
 
+export type AlertSoundId =
+  | "chirp"
+  | "pulse"
+  | "siren"
+  | "ping"
+  | "klaxon"
+  | "triple"
+  | "digital";
+
 export interface Settings {
   alertDistanceFeet: number;
   muted: boolean;
@@ -85,6 +94,8 @@ export interface Settings {
   headingUp: boolean;
   escalate: boolean;
   showFov: boolean;
+  /** Alert tone played when a camera enters range. */
+  alertSound: AlertSoundId;
   /** Show/hide plate readers (ALPR). */
   showAlpr: boolean;
   /** Show/hide traffic + speed cameras. */

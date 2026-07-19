@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useCameraStore } from "@/store/cameraStore";
-import { playChirp } from "@/services/alertEngine";
+import { ALERT_SOUNDS, playAlert, unlockAudio } from "@/services/alertEngine";
+import type { AlertSoundId } from "@/types";
 
 export function SettingsMode() {
   const s = useSettingsStore();
@@ -57,7 +58,39 @@ export function SettingsMode() {
           checked={s.alertTraffic}
           onChange={(v) => s.set("alertTraffic", v)}
         />
-        <button className="test-btn" onClick={() => playChirp({ intensity: 0.7 })}>
+
+        <label className="setting">
+          <span>Alert sound</span>
+          <div className="sound-grid">
+            {ALERT_SOUNDS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                className={`sound-opt ${s.alertSound === opt.id ? "on" : ""}`}
+                onClick={() => {
+                  s.set("alertSound", opt.id);
+                  void unlockAudio().then(() =>
+                    playAlert({ intensity: 0.7, sound: opt.id }),
+                  );
+                }}
+              >
+                <span className="sound-opt-label">{opt.label}</span>
+                <span className="sound-opt-blurb">{opt.blurb}</span>
+              </button>
+            ))}
+          </div>
+        </label>
+        <button
+          className="test-btn"
+          onClick={() => {
+            void unlockAudio().then(() =>
+              playAlert({
+                intensity: 0.7,
+                sound: s.alertSound as AlertSoundId,
+              }),
+            );
+          }}
+        >
           Test alert sound
         </button>
       </section>

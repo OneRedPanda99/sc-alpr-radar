@@ -16,6 +16,7 @@ function pickSettings(s: Settings): Settings {
     headingUp: s.headingUp,
     escalate: s.escalate,
     showFov: s.showFov,
+    alertSound: s.alertSound,
     showAlpr: s.showAlpr,
     showTraffic: s.showTraffic,
     alertTraffic: s.alertTraffic,

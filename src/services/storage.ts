@@ -40,6 +40,7 @@ export const DEFAULT_SETTINGS: Settings = {
   headingUp: true,
   escalate: true,
   showFov: true,
+  alertSound: "chirp",
   showAlpr: true,
   showTraffic: true,
   alertTraffic: false,
@@ -81,9 +82,25 @@ export async function saveCommunityCache(cameras: Camera[]): Promise<void> {
   await (await db()).put("meta", cameras, "communityCameras");
 }
 
+const ALERT_SOUND_IDS = new Set([
+  "chirp",
+  "pulse",
+  "siren",
+  "ping",
+  "klaxon",
+  "triple",
+  "digital",
+]);
+
 export async function loadSettings(): Promise<Settings> {
-  const stored = (await (await db()).get("meta", "settings")) as Partial<Settings> | undefined;
-  return { ...DEFAULT_SETTINGS, ...(stored ?? {}) };
+  const stored = (await (await db()).get("meta", "settings")) as
+    | Partial<Settings>
+    | undefined;
+  const merged = { ...DEFAULT_SETTINGS, ...(stored ?? {}) };
+  if (!ALERT_SOUND_IDS.has(merged.alertSound)) {
+    merged.alertSound = DEFAULT_SETTINGS.alertSound;
+  }
+  return merged;
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
