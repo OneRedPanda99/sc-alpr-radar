@@ -35,15 +35,23 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
     return dataset.cameras.filter(
       (c) =>
         (c.kind === "alpr" ? showAlpr : showTraffic) &&
-        (!flockOnly || c.brand === "Flock Safety"),
+        (!flockOnly || c.brand === "Flock Safety" || c.custom),
     );
   }, [dataset, showAlpr, showTraffic, flockOnly]);
 
+  // Avoidance weighs plate readers, cameras you added, and community submissions
+  // (not bulk SCDOT traffic cams — those aren't surveillance to avoid).
   const routeCameras = useMemo(() => {
     if (!dataset) return [];
-    return dataset.cameras.filter(
-      (c) => c.kind === "alpr" && (!flockOnly || c.brand === "Flock Safety"),
-    );
+    return dataset.cameras.filter((c) => {
+      const isCommunity = c.id.startsWith("community/");
+      const counts =
+        c.custom || isCommunity || c.kind === "alpr";
+      if (!counts) return false;
+      if (flockOnly && c.brand !== "Flock Safety" && !c.custom && !isCommunity)
+        return false;
+      return true;
+    });
   }, [dataset, flockOnly]);
 
   const [fromQuery, setFromQuery] = useState("");
@@ -63,19 +71,10 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
 
   const fromTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const gpsSeeded = useRef(false);
 
   useEffect(() => {
     void listRoutes().then(setSaved);
   }, []);
-
-  // Seed origin from GPS once (don't fight the user if they clear it).
-  useEffect(() => {
-    if (gpsSeeded.current || !fix || from) return;
-    gpsSeeded.current = true;
-    setFrom({ label: "Current location", point: fix.point });
-    setFromQuery("Current location");
-  }, [fix, from]);
 
   const runSearch = async (
     which: "from" | "to",
@@ -223,7 +222,7 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
               <span className="place-dot origin" />
               <input
                 className="search-input"
-                placeholder="Start — address or place"
+                placeholder="Start address (or tap GPS)"
                 value={fromQuery}
                 autoComplete="street-address"
                 enterKeyHint="search"
@@ -275,7 +274,8 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
               </button>
             </div>
             <p className="place-hint">
-              Type an address — suggestions appear as you type. Tap one to set it.
+              Type any start and destination address. GPS is optional (button
+              only) — it will not overwrite what you type.
             </p>
           </div>
 

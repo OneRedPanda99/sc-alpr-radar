@@ -5,6 +5,7 @@ import {
   AllClearBanner,
   CameraAlertCard,
   CameraDetailCard,
+  FacingPicker,
 } from "@/components/CameraAlertCard";
 import type { LatLng } from "@/types";
 import { useCameraStore } from "@/store/cameraStore";
@@ -35,7 +36,8 @@ interface NearHit {
 }
 
 export function DriveMode({ activeRoute }: DriveModeProps) {
-  const { grid, dataset, status, addCamera, removeCamera } = useCameraStore();
+  const { grid, dataset, status, addCamera, updateCamera, removeCamera } =
+    useCameraStore();
   const {
     alertDistanceFeet,
     muted,
@@ -53,7 +55,7 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
   const isShown = useMemo(
     () => (c: Camera) =>
       (c.kind === "alpr" ? showAlpr : showTraffic) &&
-      (!flockOnly || c.brand === "Flock Safety"),
+      (!flockOnly || c.brand === "Flock Safety" || !!c.custom),
     [showAlpr, showTraffic, flockOnly],
   );
   const isAlertable = useMemo(
@@ -66,6 +68,8 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [browseCenter, setBrowseCenter] = useState<LatLng | null>(null);
   const [addKind, setAddKind] = useState<CameraKind | null>(null);
+  /** Facing while placing: null = 360° / omni, else degrees 0–359. */
+  const [addFacing, setAddFacing] = useState<number | null>(null);
   const { fix, error } = useGeolocation({ enabled: driving });
   useWakeLock(driving);
 
@@ -172,6 +176,7 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
   const handlePlace = async (point: LatLng) => {
     const kind = addKind ?? "alpr";
     const id = `custom/${Date.now()}`;
+    const omni = addFacing == null;
     const camera: Camera = {
       id,
       lat: point.lat,
@@ -180,23 +185,35 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
       brand: "Other",
       name: kind === "alpr" ? "My plate reader" : "My traffic camera",
       operator: "Added by me",
-      directions: [],
-      omni: true,
+      directions: omni ? [] : [addFacing],
+      omni,
       purpose:
         kind === "alpr"
           ? "User-added plate reader"
           : "User-added traffic camera",
-      fovHalfAngle: 40,
+      fovHalfAngle: omni ? 180 : 40,
       custom: true,
     };
     await addCamera(camera);
     setAddKind(null);
+    setAddFacing(null);
     setSelectedId(id);
   };
 
   const handleDelete = async (id: string) => {
     await removeCamera(id);
     setSelectedId(null);
+  };
+
+  const handleUpdateFacing = async (
+    id: string,
+    facing: { omni: boolean; degrees: number | null },
+  ) => {
+    await updateCamera(id, {
+      omni: facing.omni,
+      directions: facing.omni || facing.degrees == null ? [] : [facing.degrees],
+      fovHalfAngle: facing.omni ? 180 : 40,
+    });
   };
 
   const urgency =
@@ -251,7 +268,15 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
         </button>
         <button
           className={`map-chip add ${addKind ? "on" : ""}`}
-          onClick={() => setAddKind(addKind ? null : "alpr")}
+          onClick={() => {
+            if (addKind) {
+              setAddKind(null);
+              setAddFacing(null);
+            } else {
+              setAddKind("alpr");
+              setAddFacing(null);
+            }
+          }}
           title="Add a camera the map is missing"
         >
           {addKind ? "Cancel" : "+ Add camera"}
@@ -275,6 +300,7 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
               Traffic cam
             </button>
           </div>
+          <FacingPicker value={addFacing} onChange={setAddFacing} />
         </div>
       )}
 
@@ -284,6 +310,9 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
           distanceMeters={selectedDistance}
           onClose={() => setSelectedId(null)}
           onDelete={handleDelete}
+          onUpdateFacing={
+            selectedCamera.custom ? handleUpdateFacing : undefined
+          }
         />
       )}
 

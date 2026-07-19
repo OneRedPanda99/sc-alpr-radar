@@ -31,6 +31,7 @@ interface CameraState {
   hydrate: () => Promise<void>;
   refresh: (source: "bundled" | "live") => Promise<void>;
   addCamera: (camera: Camera) => Promise<void>;
+  updateCamera: (id: string, patch: Partial<Camera>) => Promise<void>;
   removeCamera: (id: string) => Promise<void>;
 }
 
@@ -150,6 +151,19 @@ export const useCameraStore = create<CameraState>((set, get) => ({
       dataset,
       grid: new CameraGrid(dataset.cameras),
       status: dataset.count > 0 ? "ready" : "empty",
+    });
+  },
+
+  updateCamera: async (id, patch) => {
+    const custom = get().custom.map((c) =>
+      c.id === id ? { ...c, ...patch, id: c.id, custom: true } : c,
+    );
+    await saveCustomCameras(custom);
+    const dataset = combine(get().pack, get().community, custom);
+    set({
+      custom,
+      dataset,
+      grid: new CameraGrid(dataset.cameras),
     });
   },
 

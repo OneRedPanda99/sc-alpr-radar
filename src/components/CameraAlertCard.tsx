@@ -14,6 +14,66 @@ function cardTitle(camera: Camera): string {
   return camera.kind === "alpr" ? `${camera.brand} ALPR` : KIND_LABELS[camera.kind];
 }
 
+const COMPASS: { label: string; deg: number | null }[] = [
+  { label: "360°", deg: null },
+  { label: "N", deg: 0 },
+  { label: "NE", deg: 45 },
+  { label: "E", deg: 90 },
+  { label: "SE", deg: 135 },
+  { label: "S", deg: 180 },
+  { label: "SW", deg: 225 },
+  { label: "W", deg: 270 },
+  { label: "NW", deg: 315 },
+];
+
+/** Facing picker: null = omni / 360°, else 0–359 degrees. */
+export function FacingPicker({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (deg: number | null) => void;
+}) {
+  return (
+    <div className="facing-picker">
+      <div className="facing-label">Facing</div>
+      <div className="facing-compass">
+        {COMPASS.map((c) => (
+          <button
+            key={c.label}
+            type="button"
+            className={value === c.deg ? "on" : ""}
+            onClick={() => onChange(c.deg)}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+      <label className="facing-deg-row">
+        <span>Degrees</span>
+        <input
+          type="number"
+          min={0}
+          max={359}
+          inputMode="numeric"
+          placeholder="0–359"
+          value={value ?? ""}
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (raw === "") {
+              onChange(null);
+              return;
+            }
+            const n = Number(raw);
+            if (!Number.isFinite(n)) return;
+            onChange(((Math.round(n) % 360) + 360) % 360);
+          }}
+        />
+      </label>
+    </div>
+  );
+}
+
 interface Props {
   camera: Camera;
   distanceMeters: number;
@@ -94,6 +154,10 @@ interface DetailProps {
   distanceMeters?: number | null;
   onClose: () => void;
   onDelete?: (id: string) => void;
+  onUpdateFacing?: (
+    id: string,
+    facing: { omni: boolean; degrees: number | null },
+  ) => void;
 }
 
 export function CameraDetailCard({
@@ -101,12 +165,16 @@ export function CameraDetailCard({
   distanceMeters,
   onClose,
   onDelete,
+  onUpdateFacing,
 }: DetailProps) {
   const [imgFailed, setImgFailed] = useState(false);
   const photo = !imgFailed && (camera.imageUrl || brandImage(camera.brand));
   const title = cardTitle(camera);
   const feet =
     distanceMeters != null ? Math.round(metersToFeet(distanceMeters)) : null;
+  const facingValue = camera.omni
+    ? null
+    : (camera.directions[0] ?? null);
 
   return (
     <div className="detail-card">
@@ -151,6 +219,17 @@ export function CameraDetailCard({
             </div>
           )}
         </div>
+        {camera.custom && onUpdateFacing && (
+          <FacingPicker
+            value={facingValue}
+            onChange={(deg) =>
+              onUpdateFacing(camera.id, {
+                omni: deg == null,
+                degrees: deg,
+              })
+            }
+          />
+        )}
         {camera.custom && (
           <div className="detail-actions">
             <a
