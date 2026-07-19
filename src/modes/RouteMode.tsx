@@ -361,7 +361,7 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
           {searching && <div className="info">Searching addresses…</div>}
           {busy && (
             <div className="info">
-              Searching parallel roads for fewer cameras + faster time…
+              Asking router to exclude camera zones…
             </div>
           )}
           {error && <div className="hud-error">{error}</div>}
