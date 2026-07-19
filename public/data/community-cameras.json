@@ -1,4 +1,20 @@
 {
-  "updatedAt": "1970-01-01T00:00:00.000Z",
-  "cameras": []
+  "updatedAt": "2026-07-19T00:47:48.760Z",
+  "cameras": [
+    {
+      "id": "community/3",
+      "lat": 33.973441,
+      "lon": -80.968068,
+      "kind": "traffic",
+      "brand": "Other",
+      "name": "My traffic camera",
+      "operator": "Community submission",
+      "directions": [],
+      "omni": true,
+      "purpose": "Community-reported traffic camera",
+      "fovHalfAngle": 40,
+      "submittedBy": "OneRedPanda99",
+      "submittedAt": "2026-07-19T00:47:48.760Z"
+    }
+  ]
 }
