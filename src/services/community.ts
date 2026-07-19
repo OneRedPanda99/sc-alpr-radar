@@ -2,13 +2,14 @@ import type { Camera } from "@/types";
 import { cameraFromFeatureProps } from "@/services/cameraParse";
 
 // Community-submitted cameras live in a plain JSON file in the repo so the
-// dataset stays fully open source. We read it straight from GitHub (raw) so new
-// submissions appear for everyone within ~a minute of the Action committing —
-// no redeploy needed. Falls back to the deployed copy, then the cache.
-const RAW_URL =
-  "https://raw.githubusercontent.com/OneRedPanda99/sc-alpr-radar/main/public/data/community-cameras.json";
-
-const DEPLOYED_URL = `${import.meta.env.BASE_URL}data/community-cameras.json`;
+// dataset stays fully open source. We always prefer sources that track the tip
+// of `main` (raw GitHub / jsDelivr) so approvals show up without waiting for a
+// Pages redeploy. The deployed copy is only a last-resort offline fallback.
+const COMMUNITY_URLS = [
+  "https://raw.githubusercontent.com/OneRedPanda99/sc-alpr-radar/main/public/data/community-cameras.json",
+  "https://cdn.jsdelivr.net/gh/OneRedPanda99/sc-alpr-radar@main/public/data/community-cameras.json",
+  `${import.meta.env.BASE_URL}data/community-cameras.json`,
+];
 
 interface CommunityFile {
   updatedAt?: string;
@@ -32,7 +33,8 @@ async function tryFetch(url: string, timeoutMs = 8000): Promise<Camera[] | null>
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(`${url}?t=${Date.now()}`, {
+    const sep = url.includes("?") ? "&" : "?";
+    const res = await fetch(`${url}${sep}t=${Date.now()}`, {
       signal: controller.signal,
       cache: "no-store",
     });
@@ -45,9 +47,13 @@ async function tryFetch(url: string, timeoutMs = 8000): Promise<Camera[] | null>
   }
 }
 
-/** Fetch community cameras, preferring the live GitHub copy. */
+/** Fetch community cameras from the tip of main (raw / CDN), then deployed copy. */
 export async function fetchCommunityCameras(): Promise<Camera[] | null> {
-  return (await tryFetch(RAW_URL)) ?? (await tryFetch(DEPLOYED_URL));
+  for (const url of COMMUNITY_URLS) {
+    const cams = await tryFetch(url);
+    if (cams != null) return cams;
+  }
+  return null;
 }
 
 const REPO = "OneRedPanda99/sc-alpr-radar";

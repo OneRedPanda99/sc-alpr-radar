@@ -7,6 +7,7 @@ on:
 permissions:
   contents: write
   issues: write
+  actions: write
 
 concurrency:
   group: community-cameras
@@ -56,6 +57,20 @@ jobs:
           git add public/data/community-cameras.json
           git commit -m "Add community camera from #${{ github.event.issue.number }}"
           git push
+
+      # GITHUB_TOKEN pushes do not trigger other workflows, so kick Pages deploy
+      # explicitly so the hosted community-cameras.json stays in sync for everyone.
+      - name: Redeploy site
+        if: steps.apply.outputs.status == 'added'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'deploy.yml',
+              ref: 'main',
+            });
 
       - name: Comment result
         uses: actions/github-script@v7

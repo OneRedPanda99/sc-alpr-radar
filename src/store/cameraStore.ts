@@ -103,8 +103,10 @@ export const useCameraStore = create<CameraState>((set, get) => ({
       });
 
       // Refresh the shared community dataset in the background (non-blocking).
+      // Prefer tip-of-main sources so newly approved cameras appear without a
+      // Pages redeploy. `null` means every source failed; keep the cache.
       void fetchCommunityCameras().then((fresh) => {
-        if (!fresh) return;
+        if (fresh == null) return;
         void saveCommunityCache(fresh);
         const next = combine(get().pack, fresh, get().custom);
         set({
