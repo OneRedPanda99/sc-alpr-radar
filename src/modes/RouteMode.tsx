@@ -300,7 +300,7 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
 
           {busy && (
             <div className="info">
-              Finding a camera-avoiding route (trying detours)…
+              Deep search — maximizing camera avoidance (can take a minute)…
             </div>
           )}
           {error && <div className="hud-error">{error}</div>}

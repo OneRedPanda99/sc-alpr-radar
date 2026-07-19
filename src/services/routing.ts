@@ -11,18 +11,22 @@ import {
  *  - Geocode: Photon (Komoot) — CORS-friendly, OSM-based
  *  - Directions: public OSRM demo — geometries + turn-by-turn steps
  *
- * Avoidance: score OSRM alternatives, then actively detour around cameras on
- * the best path by injecting via-points offset from each camera and re-routing.
+ * Avoidance is thorough and slow on purpose: iteratively stack via-points
+ * around every camera still on the path until camera count stops improving.
+ * Duration is almost ignored — fewer cameras always wins.
  */
 
 const OSRM_BASE = "https://router.project-osrm.org/route/v1/driving";
 const PHOTON_BASE = "https://photon.komoot.io/api/";
-/** How close a camera must be to the path to "count" (~400 ft). */
-const CORRIDOR_METERS = feetToMeters(400);
-/** Max cameras we'll try to steer around in one plan. */
-const MAX_DETOUR_CAMERAS = 5;
-/** Max via-point detour requests (keeps public OSRM happy). */
-const MAX_DETOUR_REQUESTS = 16;
+/** How close a camera must be to the path to "count" (~500 ft). */
+const CORRIDOR_METERS = feetToMeters(500);
+/** Cameras considered per search round (spread along the route). */
+const MAX_DETOUR_CAMERAS = 14;
+/** Deep search budget — user prefers max avoidance over speed. */
+const MAX_DETOUR_REQUESTS = 240;
+const MAX_REQUESTS_PER_ROUND = 48;
+const MAX_AVOID_ROUNDS = 18;
+const PARALLEL_OSRM = 6;
 
 // Rough SC bias for Photon results.
 const SC_CENTER = { lat: 33.8361, lon: -81.1637 };
@@ -244,56 +248,109 @@ function routeBearingNear(
   return bearing;
 }
 
+/** Index of the path vertex nearest to a point. */
+function nearestPathIndex(
+  coordinates: [number, number][],
+  point: LatLng,
+): number {
+  let bestI = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < coordinates.length; i++) {
+    const d = haversineMeters(point, {
+      lat: coordinates[i][1],
+      lon: coordinates[i][0],
+    });
+    if (d < bestD) {
+      bestD = d;
+      bestI = i;
+    }
+  }
+  return bestI;
+}
+
 /** Spread cameras along the route so we don't detour the same cluster twice. */
 function pickDetourTargets(
   coordinates: [number, number][],
   cameras: Camera[],
+  max = MAX_DETOUR_CAMERAS,
 ): Camera[] {
   const onRoute = camerasNearRoute(coordinates, cameras);
   if (!onRoute.length) return [];
 
-  // Order by progress along the route (nearest path vertex index).
   const ranked = onRoute
-    .map((cam) => {
-      let bestI = 0;
-      let bestD = Infinity;
-      for (let i = 0; i < coordinates.length; i++) {
-        const d = haversineMeters(cam, {
-          lat: coordinates[i][1],
-          lon: coordinates[i][0],
-        });
-        if (d < bestD) {
-          bestD = d;
-          bestI = i;
-        }
-      }
-      return { cam, bestI };
-    })
+    .map((cam) => ({ cam, bestI: nearestPathIndex(coordinates, cam) }))
     .sort((a, b) => a.bestI - b.bestI);
 
   const picked: Camera[] = [];
   for (const { cam } of ranked) {
-    if (picked.length >= MAX_DETOUR_CAMERAS) break;
-    const tooClose = picked.some((p) => haversineMeters(p, cam) < 250);
+    if (picked.length >= max) break;
+    // Tight cluster merge — still try each dense pocket separately.
+    const tooClose = picked.some((p) => haversineMeters(p, cam) < 140);
     if (!tooClose) picked.push(cam);
   }
   return picked;
 }
 
-/** Via points that try to send the driver around a camera. */
+/** Many via points around a camera — near and far, both sides. */
 function detourVias(camera: Camera, routeBearing: number): LatLng[] {
-  const left = (routeBearing + 270) % 360;
-  const right = (routeBearing + 90) % 360;
-  const diagL = (routeBearing + 225) % 360;
-  const diagR = (routeBearing + 135) % 360;
-  return [
-    destinationPoint(camera, 450, left),
-    destinationPoint(camera, 450, right),
-    destinationPoint(camera, 750, left),
-    destinationPoint(camera, 750, right),
-    destinationPoint(camera, 550, diagL),
-    destinationPoint(camera, 550, diagR),
+  const angles = [
+    (routeBearing + 270) % 360, // left
+    (routeBearing + 90) % 360, // right
+    (routeBearing + 225) % 360,
+    (routeBearing + 135) % 360,
+    (routeBearing + 240) % 360,
+    (routeBearing + 120) % 360,
+    (routeBearing + 300) % 360,
+    (routeBearing + 60) % 360,
   ];
+  const distances = [350, 550, 800, 1200, 1800, 2600];
+  const out: LatLng[] = [];
+  for (const d of distances) {
+    for (const a of angles) {
+      out.push(destinationPoint(camera, d, a));
+    }
+  }
+  return out;
+}
+
+/** Keep vias ordered along the route and drop near-duplicates. */
+function mergeViasAlongRoute(
+  existing: LatLng[],
+  next: LatLng,
+  routeCoords: [number, number][],
+): LatLng[] {
+  const all = [...existing, next];
+  const ranked = all
+    .map((v) => ({ v, i: nearestPathIndex(routeCoords, v) }))
+    .sort((a, b) => a.i - b.i);
+  const out: LatLng[] = [];
+  for (const { v } of ranked) {
+    if (!out.some((p) => haversineMeters(p, v) < 120)) out.push(v);
+  }
+  return out.slice(0, 10); // OSRM waypoint practical limit
+}
+
+function viaKey(v: LatLng): string {
+  return `${v.lat.toFixed(4)},${v.lon.toFixed(4)}`;
+}
+
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let i = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      out[idx] = await fn(items[idx]);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker()),
+  );
+  return out;
 }
 
 export interface RoutePlan {
@@ -320,79 +377,167 @@ export async function planRoute(
     );
   }
 
-  const candidates: ScoredRoute[] = baseRoutes.map((r) => scoreRoute(r, cameras));
+  const candidates: ScoredRoute[] = baseRoutes.map((r) =>
+    scoreRoute(r, cameras),
+  );
   const fastest = candidates[0];
-  let avoidance = pickBest(candidates);
+  let best = pickBest(candidates);
+  let committedVias: LatLng[] = [];
+  let requests = 0;
+  const triedVias = new Set<string>();
 
-  // Actively steer around cameras still on the best path.
-  if (avoidance.cameraCount > 0 && cameras.length > 0) {
-    const targets = pickDetourTargets(avoidance.coordinates, cameras);
-    let requests = 0;
+  // Deep iterative avoidance: each round finds a via that lowers camera count,
+  // commits it, and repeats until zero cameras or no further improvement.
+  for (
+    let round = 0;
+    round < MAX_AVOID_ROUNDS &&
+    best.cameraCount > 0 &&
+    cameras.length > 0 &&
+    requests < MAX_DETOUR_REQUESTS;
+    round++
+  ) {
+    const targets = pickDetourTargets(best.coordinates, cameras);
+    if (!targets.length) break;
 
-    for (const cam of targets) {
-      if (avoidance.cameraCount === 0 || requests >= MAX_DETOUR_REQUESTS) break;
-      const bearing = routeBearingNear(avoidance.coordinates, cam);
-      const vias = detourVias(cam, bearing);
+    // Build via candidates per camera, then round-robin so every camera gets
+    // tries before we burn the whole budget on one cluster.
+    const perCamVias: LatLng[][] = targets.map((cam) => {
+      const bearing = routeBearingNear(best.coordinates, cam);
+      return detourVias(cam, bearing).filter((via) => {
+        if (haversineMeters(via, origin) < 150) return false;
+        if (haversineMeters(via, destination) < 150) return false;
+        const key = viaKey(via);
+        if (triedVias.has(key)) return false;
+        triedVias.add(key);
+        return true;
+      });
+    });
 
-      for (const via of vias) {
-        if (requests >= MAX_DETOUR_REQUESTS) break;
-        // Skip vias that land too close to origin/dest (useless).
-        if (haversineMeters(via, origin) < 120) continue;
-        if (haversineMeters(via, destination) < 120) continue;
-        requests++;
-        try {
-          const detours = await fetchOsrmWaypoints(
-            [origin, via, destination],
-            false,
-          );
-          for (const r of detours) {
-            const scored = scoreRoute(r, cameras);
-            // Reject absurdly long detours (>2.5× fastest duration).
-            if (scored.durationSeconds > fastest.durationSeconds * 2.5) continue;
-            candidates.push(scored);
-          }
-        } catch {
-          // Ignore individual detour failures; keep what we have.
+    const viaJobs: LatLng[] = [];
+    for (let i = 0; i < 64; i++) {
+      let added = false;
+      for (const list of perCamVias) {
+        if (i < list.length) {
+          viaJobs.push(list[i]);
+          added = true;
         }
       }
-
-      avoidance = pickBest(candidates);
+      if (!added) break;
     }
 
-    // Second pass: if still cameras left, try a two-via detour around the
-    // first two remaining targets (left of first + right of second).
-    if (avoidance.cameraCount > 0 && requests < MAX_DETOUR_REQUESTS) {
-      const remaining = pickDetourTargets(avoidance.coordinates, cameras);
-      if (remaining.length >= 2) {
-        const b0 = routeBearingNear(avoidance.coordinates, remaining[0]);
-        const b1 = routeBearingNear(avoidance.coordinates, remaining[1]);
-        const viaA = destinationPoint(remaining[0], 600, (b0 + 270) % 360);
-        const viaB = destinationPoint(remaining[1], 600, (b1 + 90) % 360);
-        try {
-          const detours = await fetchOsrmWaypoints(
-            [origin, viaA, viaB, destination],
-            false,
-          );
-          for (const r of detours) {
-            const scored = scoreRoute(r, cameras);
-            if (scored.durationSeconds > fastest.durationSeconds * 2.8) continue;
-            candidates.push(scored);
-          }
-          avoidance = pickBest(candidates);
-        } catch {
-          // ignore
-        }
+    if (!viaJobs.length) break;
+
+    const budget = Math.min(
+      viaJobs.length,
+      MAX_REQUESTS_PER_ROUND,
+      MAX_DETOUR_REQUESTS - requests,
+    );
+    const batch = viaJobs.slice(0, budget);
+    requests += batch.length;
+
+    const scoredBatch = await mapPool(batch, PARALLEL_OSRM, async (via) => {
+      const points = [origin, ...committedVias, via, destination];
+      if (points.length > 12) return null;
+      try {
+        const routes = await fetchOsrmWaypoints(points, false);
+        if (!routes.length) return null;
+        return { scored: scoreRoute(routes[0], cameras), via };
+      } catch {
+        return null;
+      }
+    });
+
+    let roundBest = best;
+    let roundVia: LatLng | null = null;
+    for (const hit of scoredBatch) {
+      if (!hit) continue;
+      candidates.push(hit.scored);
+      // Fewer cameras always wins — ignore how long the detour is.
+      if (hit.scored.cameraCount < roundBest.cameraCount) {
+        roundBest = hit.scored;
+        roundVia = hit.via;
       }
     }
+
+    if (roundVia && roundBest.cameraCount < best.cameraCount) {
+      committedVias = mergeViasAlongRoute(
+        committedVias,
+        roundVia,
+        roundBest.coordinates,
+      );
+      best = roundBest;
+      continue;
+    }
+
+    // No single-via improvement — try pairing vias around the two worst cams.
+    if (targets.length >= 2 && requests < MAX_DETOUR_REQUESTS) {
+      const b0 = routeBearingNear(best.coordinates, targets[0]);
+      const b1 = routeBearingNear(best.coordinates, targets[1]);
+      const pairJobs: LatLng[][] = [];
+      for (const d of [600, 1000, 1600]) {
+        pairJobs.push([
+          destinationPoint(targets[0], d, (b0 + 270) % 360),
+          destinationPoint(targets[1], d, (b1 + 90) % 360),
+        ]);
+        pairJobs.push([
+          destinationPoint(targets[0], d, (b0 + 90) % 360),
+          destinationPoint(targets[1], d, (b1 + 270) % 360),
+        ]);
+        pairJobs.push([
+          destinationPoint(targets[0], d, (b0 + 270) % 360),
+          destinationPoint(targets[1], d, (b1 + 270) % 360),
+        ]);
+      }
+
+      const pairBudget = Math.min(pairJobs.length, MAX_DETOUR_REQUESTS - requests);
+      requests += pairBudget;
+      const pairHits = await mapPool(
+        pairJobs.slice(0, pairBudget),
+        PARALLEL_OSRM,
+        async (pair) => {
+          const points = [origin, ...committedVias, ...pair, destination];
+          if (points.length > 12) return null;
+          try {
+            const routes = await fetchOsrmWaypoints(points, false);
+            if (!routes.length) return null;
+            return {
+              scored: scoreRoute(routes[0], cameras),
+              pair,
+            };
+          } catch {
+            return null;
+          }
+        },
+      );
+
+      let improved = false;
+      for (const hit of pairHits) {
+        if (!hit) continue;
+        candidates.push(hit.scored);
+        if (hit.scored.cameraCount < best.cameraCount) {
+          best = hit.scored;
+          committedVias = mergeViasAlongRoute(
+            mergeViasAlongRoute(committedVias, hit.pair[0], hit.scored.coordinates),
+            hit.pair[1],
+            hit.scored.coordinates,
+          );
+          improved = true;
+        }
+      }
+      if (improved) continue;
+    }
+
+    // Stalled — stop burning requests.
+    break;
   }
 
-  avoidance = pickBest(candidates);
+  best = pickBest([best, ...candidates]);
 
   return {
     fastest,
-    avoidance,
+    avoidance: best,
     camerasOnFastest: fastest.cameraCount,
-    camerasUnavoidable: avoidance.cameraCount,
+    camerasUnavoidable: best.cameraCount,
   };
 }
 
