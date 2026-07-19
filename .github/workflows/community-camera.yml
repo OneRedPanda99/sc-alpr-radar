@@ -13,8 +13,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  add-camera:
-    if: contains(github.event.issue.labels.*.name, 'camera-submission')
+  process:
+    # Only camera submissions, and only when either:
+    #  - a maintainer added the `approved` label (publish), or
+    #  - the issue was opened/edited while open (validate & queue).
+    if: >
+      contains(github.event.issue.labels.*.name, 'camera-submission') &&
+      (
+        (github.event.action == 'labeled' && github.event.label.name == 'approved') ||
+        (github.event.action != 'labeled' && github.event.issue.state == 'open')
+      )
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,11 +31,22 @@ jobs:
         with:
           node-version: 20
 
-      - name: Apply submission to dataset
+      - name: Determine mode
+        id: mode
+        run: |
+          if [ "${{ github.event.action }}" = "labeled" ] && [ "${{ github.event.label.name }}" = "approved" ]; then
+            echo "approve=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "approve=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate / apply submission
         id: apply
+        env:
+          APPLY_MODE: ${{ steps.mode.outputs.approve == 'true' && 'apply' || 'validate' }}
         run: node scripts/apply-camera-issue.mjs
 
-      - name: Commit updated dataset
+      - name: Commit approved camera
         if: steps.apply.outputs.status == 'added'
         run: |
           git config user.name "github-actions[bot]"
@@ -42,24 +61,35 @@ jobs:
           script: |
             const status = ${{ toJSON(steps.apply.outputs.status) }};
             const message = ${{ toJSON(steps.apply.outputs.message) }};
-            const ok = status === 'added';
-            const dup = status === 'duplicate';
-            const body = ok
-              ? `✅ ${message}\n\nThanks! It will appear in the app for everyone within a minute.`
-              : dup
-                ? `ℹ️ ${message}`
-                : `⚠️ Could not add this camera: ${message}\n\nPlease edit the issue with valid values, or reopen with corrected coordinates.`;
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body,
-            });
-            if (ok || dup) {
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                state: 'closed',
-              });
+            const approve = ${{ steps.mode.outputs.approve == 'true' }};
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue_number = context.issue.number;
+
+            let body;
+            let close = false;
+            let addLabel = null;
+
+            if (status === 'valid') {
+              body = `⏳ **Pending approval.** ${message}\n\nA maintainer will add the \`approved\` label to publish it for everyone.`;
+              addLabel = 'pending-approval';
+            } else if (status === 'added') {
+              body = `✅ **Published.** ${message}\n\nLive for everyone within a minute.`;
+              close = true;
+            } else if (status === 'duplicate') {
+              body = `ℹ️ ${message}`;
+              close = true;
+            } else {
+              body = `⚠️ Could not accept this camera: ${message}\n\nEdit the issue with valid values (South Carolina coordinates).`;
+            }
+
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+
+            if (addLabel) {
+              try {
+                await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [addLabel] });
+              } catch (e) { /* label may already exist on issue */ }
+            }
+            if (close) {
+              await github.rest.issues.update({ owner, repo, issue_number, state: 'closed' });
             }

@@ -3,6 +3,11 @@
  * Parse a "camera-submission" issue (GitHub issue form) and append the camera to
  * the shared community dataset. Run by .github/workflows/community-camera.yml.
  *
+ * APPLY_MODE=validate  -> only check the submission (no file write). Used when an
+ *                         issue is opened; the camera waits for maintainer approval.
+ * APPLY_MODE=apply     -> write the camera to the dataset. Used once a maintainer
+ *                         adds the `approved` label.
+ *
  * Writes step outputs (status, message) to $GITHUB_OUTPUT so the workflow can
  * comment on / close the issue.
  */
@@ -90,6 +95,16 @@ async function main() {
   );
   if (dup) {
     await setOutput("duplicate", "That camera is already in the dataset.");
+    process.exit(0);
+  }
+
+  // Validation-only pass: confirm it's good, but leave the dataset untouched
+  // until a maintainer approves.
+  if (process.env.APPLY_MODE === "validate") {
+    await setOutput(
+      "valid",
+      `Ready to add ${kind} camera at ${lat.toFixed(5)}, ${lon.toFixed(5)}.`,
+    );
     process.exit(0);
   }
 
