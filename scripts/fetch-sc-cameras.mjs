@@ -19,18 +19,24 @@ const ENDPOINTS = [
 const USER_AGENT = "sc-alpr-radar/0.2 (personal DeFlock data pack; +https://deflock.me)";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Grab EVERY mapped surveillance node (all ALPRs are man_made=surveillance) plus
+// speed cameras, then classify locally. This picks up city/county/police CCTV
+// cameras that aren't tagged with surveillance:zone=traffic.
 const QUERY = `[out:json][timeout:180];
 area["name"="South Carolina"]["admin_level"="4"]->.sc;
 (
-  node["surveillance:type"="ALPR"](area.sc);
+  node["man_made"="surveillance"](area.sc);
   node["highway"="speed_camera"](area.sc);
-  node["man_made"="surveillance"]["surveillance:zone"="traffic"](area.sc);
 );
 out body;`;
 
+// Returns the camera kind, or null for non-camera surveillance we skip
+// (e.g. ShotSpotter gunshot detectors, security guards).
 function classifyKind(tags) {
-  if (tags["surveillance:type"] === "ALPR") return "alpr";
+  const type = tags["surveillance:type"];
+  if (type === "ALPR") return "alpr";
   if (tags["highway"] === "speed_camera") return "speed";
+  if (type === "gunshot_detector" || type === "guard") return null;
   return "traffic";
 }
 
@@ -205,6 +211,7 @@ async function main() {
     if (el.lat == null || el.lon == null) continue;
     const tags = el.tags ?? {};
     const kind = classifyKind(tags);
+    if (kind == null) continue;
     const rawBrand =
       tags["manufacturer"] ?? tags["brand"] ?? tags["operator"] ?? tags["name"];
     const brand = normalizeBrand(rawBrand);
