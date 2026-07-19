@@ -253,45 +253,84 @@ export function planToSavedRoute(
   };
 }
 
-/** Photon geocoder — works from browsers (unlike Nominatim's UA policy). */
-export async function geocode(
-  query: string,
-  near?: LatLng | null,
-): Promise<{ label: string; point: LatLng }[]> {
+function formatPhotonLabel(p: Record<string, unknown>, fallback: string): string {
+  const street = [p.housenumber, p.street].filter(Boolean).join(" ");
+  const parts = [p.name, street, p.city || p.county, p.state]
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean)
+    .filter((v, i, arr) => arr.indexOf(v) === i);
+  return parts.join(", ") || fallback;
+}
+
+/** Bias free-text toward South Carolina when the user omits it. */
+function withScHint(query: string): string {
   const q = query.trim();
-  if (!q) return [];
+  if (/\b(sc|s\.?c\.?|south carolina)\b/i.test(q)) return q;
+  return `${q}, South Carolina`;
+}
 
-  const bias = near ?? SC_CENTER;
-  const params = new URLSearchParams({
-    q,
-    limit: "6",
-    lat: String(bias.lat),
-    lon: String(bias.lon),
-    // Prefer US results; Photon uses osm_tag filters differently — bias is enough.
-  });
-
-  const res = await fetch(`${PHOTON_BASE}?${params}`);
-  if (!res.ok) throw new Error(`Geocoding failed (${res.status})`);
-  const json = await res.json();
-
-  return (json.features as any[])
+function parsePhotonFeatures(
+  features: any[],
+  fallback: string,
+  preferSc: boolean,
+): { label: string; point: LatLng }[] {
+  return (features ?? [])
     .map((f) => {
       const [lon, lat] = f.geometry?.coordinates ?? [];
       if (lon == null || lat == null) return null;
       const p = f.properties ?? {};
-      // Soft filter: keep US / nearby when country is present.
       if (p.country && p.country !== "United States" && p.countrycode !== "US") {
         return null;
       }
-      const parts = [p.name, p.street, p.city || p.county, p.state, p.country]
-        .filter(Boolean)
-        .filter((v, i, arr) => arr.indexOf(v) === i);
+      if (
+        preferSc &&
+        p.state &&
+        !/south carolina|^sc$/i.test(String(p.state))
+      ) {
+        return null;
+      }
       return {
-        label: parts.join(", ") || q,
-        point: { lat, lon },
+        label: formatPhotonLabel(p, fallback),
+        point: { lat: Number(lat), lon: Number(lon) },
       };
     })
     .filter(Boolean) as { label: string; point: LatLng }[];
+}
+
+async function geocodePhoton(
+  query: string,
+  near?: LatLng | null,
+  useBbox = true,
+): Promise<{ label: string; point: LatLng }[]> {
+  const bias = near ?? SC_CENTER;
+  const params = new URLSearchParams({
+    q: query,
+    limit: "8",
+    lat: String(bias.lat),
+    lon: String(bias.lon),
+  });
+  // Prefer SC results when possible; retry without bbox if empty.
+  if (useBbox) params.set("bbox", "-83.6,32.0,-78.4,35.3");
+
+  const res = await fetch(`${PHOTON_BASE}?${params}`);
+  if (!res.ok) throw new Error(`Geocoding failed (${res.status})`);
+  const json = await res.json();
+  return parsePhotonFeatures(json.features, query, useBbox);
+}
+
+/** Geocode an address / place via Photon (Komoot), biased to South Carolina. */
+export async function geocode(
+  query: string,
+  near?: LatLng | null,
+): Promise<{ label: string; point: LatLng }[]> {
+  const raw = query.trim();
+  if (!raw) return [];
+
+  const q = withScHint(raw);
+  let results = await geocodePhoton(q, near, true);
+  if (!results.length) results = await geocodePhoton(q, near, false);
+  if (!results.length && q !== raw) results = await geocodePhoton(raw, near, false);
+  return results;
 }
 
 export function formatDistance(m: number): string {
