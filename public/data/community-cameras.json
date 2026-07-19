@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-07-19T00:47:48.760Z",
+  "updatedAt": "2026-07-19T00:53:46.853Z",
   "cameras": [
     {
       "id": "community/3",
@@ -15,6 +15,21 @@
       "fovHalfAngle": 40,
       "submittedBy": "OneRedPanda99",
       "submittedAt": "2026-07-19T00:47:48.760Z"
+    },
+    {
+      "id": "community/4",
+      "lat": 33.975369,
+      "lon": -80.956616,
+      "kind": "traffic",
+      "brand": "Other",
+      "name": "My traffic camera",
+      "operator": "Community submission",
+      "directions": [],
+      "omni": true,
+      "purpose": "Community-reported traffic camera",
+      "fovHalfAngle": 40,
+      "submittedBy": "OneRedPanda99",
+      "submittedAt": "2026-07-19T00:53:46.853Z"
     }
   ]
 }
