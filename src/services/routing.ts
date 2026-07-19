@@ -11,19 +11,18 @@ import {
  *  - Geocode: Photon (Komoot) — CORS-friendly, OSM-based
  *  - Directions: public OSRM demo — geometries + turn-by-turn steps
  *
- * Avoidance explores road-snapped parallel corridors (like a human picking an
- * alternate arterial), not random field offsets. Rank: fewest cameras, then
- * shortest time among those.
+ * Avoidance explores road-snapped parallel corridors. Rank: fewest cameras,
+ * then fewest U-turn/dead-end turnarounds, then shortest time.
  */
 
 const OSRM_BASE = "https://router.project-osrm.org/route/v1/driving";
 const OSRM_NEAREST = "https://router.project-osrm.org/nearest/v1/driving";
 const PHOTON_BASE = "https://photon.komoot.io/api/";
-/** How close a camera must be to the path to "count" (~500 ft). */
-const CORRIDOR_METERS = feetToMeters(500);
+/** How close a camera must be to the path to "count" (~550 ft). */
+const CORRIDOR_METERS = feetToMeters(550);
 const PARALLEL_OSRM = 5;
 /** Max route evaluations while searching for a better avoidance path. */
-const MAX_ROUTE_EVALS = 200;
+const MAX_ROUTE_EVALS = 260;
 
 // Rough SC bias for Photon results.
 const SC_CENTER = { lat: 33.8361, lon: -81.1637 };
@@ -59,6 +58,8 @@ interface ScoredRoute {
   distanceMeters: number;
   durationSeconds: number;
   cameraCount: number;
+  /** Explicit OSRM u-turns + detected out-and-back dead ends. */
+  turnaroundPenalty: number;
   steps: RouteStep[];
 }
 
@@ -227,24 +228,94 @@ async function snapToRoad(point: LatLng): Promise<LatLng | null> {
   }
 }
 
+/** Count OSRM u-turn maneuvers (dead-end → turn around). */
+function countOsrmUturns(route: OsrmRoute): number {
+  let n = 0;
+  for (const leg of route.legs ?? []) {
+    for (const s of leg.steps ?? []) {
+      const mod = (s.maneuver?.modifier ?? "").toLowerCase();
+      if (mod.includes("uturn") || mod.includes("u-turn")) n++;
+    }
+  }
+  return n;
+}
+
+/**
+ * Detect out-and-back: path leaves a spot, travels away, then returns to the
+ * same spot (classic dead-end via). Returns how many such loops we find.
+ */
+function countOutAndBack(coords: [number, number][]): number {
+  if (coords.length < 20) return 0;
+  const step = Math.max(1, Math.floor(coords.length / 100));
+  let hits = 0;
+  const seenAt: { i: number; p: LatLng }[] = [];
+
+  for (let i = 0; i < coords.length; i += step) {
+    const p = { lat: coords[i][1], lon: coords[i][0] };
+    for (const prev of seenAt) {
+      if (i - prev.i < 6) continue;
+      if (haversineMeters(p, prev.p) > 35) continue;
+      // Mid-path went meaningfully away from this spot → out and back.
+      let maxAway = 0;
+      for (let k = prev.i; k <= i; k += step) {
+        maxAway = Math.max(
+          maxAway,
+          haversineMeters(prev.p, {
+            lat: coords[k][1],
+            lon: coords[k][0],
+          }),
+        );
+        if (maxAway > 140) break;
+      }
+      if (maxAway > 140) {
+        hits++;
+        break;
+      }
+    }
+    seenAt.push({ i, p });
+    // Cap memory
+    if (seenAt.length > 120) seenAt.shift();
+  }
+  return hits;
+}
+
 function scoreRoute(route: OsrmRoute, cameras: Camera[]): ScoredRoute {
+  const coords = route.geometry.coordinates;
+  const uturns = countOsrmUturns(route);
+  const loops = countOutAndBack(coords);
   return {
-    coordinates: route.geometry.coordinates,
+    coordinates: coords,
     distanceMeters: route.distance,
     durationSeconds: route.duration,
-    cameraCount: camerasNearRoute(route.geometry.coordinates, cameras).length,
+    cameraCount: camerasNearRoute(coords, cameras).length,
+    turnaroundPenalty: uturns + loops * 2,
     steps: extractSteps(route),
   };
 }
 
-/** Fewest cameras, then fastest — the tradeoff you actually want when driving. */
+/**
+ * Cameras first (zero leftover ALPRs beats everything), then no dead-end
+ * turnarounds, then fastest.
+ */
 function pickBest(scored: ScoredRoute[]): ScoredRoute {
   return [...scored].sort(
     (a, b) =>
       a.cameraCount - b.cameraCount ||
+      a.turnaroundPenalty - b.turnaroundPenalty ||
       a.durationSeconds - b.durationSeconds ||
       a.distanceMeters - b.distanceMeters,
   )[0];
+}
+
+function isBetterThan(a: ScoredRoute, b: ScoredRoute): boolean {
+  if (a.cameraCount !== b.cameraCount) return a.cameraCount < b.cameraCount;
+  if (a.turnaroundPenalty !== b.turnaroundPenalty) {
+    return a.turnaroundPenalty < b.turnaroundPenalty;
+  }
+  if (a.durationSeconds !== b.durationSeconds) {
+    return a.durationSeconds < b.durationSeconds;
+  }
+  return a.distanceMeters < b.distanceMeters;
 }
 
 function viaKey(v: LatLng): string {
@@ -355,7 +426,6 @@ function rawCameraEscapeSeeds(
 ): LatLng[] {
   const onRoute = camerasNearRoute(coordinates, cameras);
   if (!onRoute.length) return [];
-  // Spread along route
   const ranked = onRoute
     .map((cam) => {
       let bestI = 0;
@@ -376,8 +446,8 @@ function rawCameraEscapeSeeds(
 
   const picked: Camera[] = [];
   for (const { cam } of ranked) {
-    if (picked.length >= 10) break;
-    if (picked.some((p) => haversineMeters(p, cam) < 180)) continue;
+    if (picked.length >= 12) break;
+    if (picked.some((p) => haversineMeters(p, cam) < 150)) continue;
     picked.push(cam);
   }
 
@@ -394,11 +464,18 @@ function rawCameraEscapeSeeds(
         bearing = bearingDeg(a, b);
       }
     }
-    for (const o of [600, 1000, 1600, 2400]) {
-      seeds.push(destinationPoint(cam, o, (bearing + 270) % 360));
-      seeds.push(destinationPoint(cam, o, (bearing + 90) % 360));
-      seeds.push(destinationPoint(cam, o, (bearing + 225) % 360));
-      seeds.push(destinationPoint(cam, o, (bearing + 135) % 360));
+    // Dense ring — last leftover ALPRs need every exit, not just left/right.
+    const radii = [350, 550, 800, 1100, 1500, 2000, 2700, 3600];
+    for (let deg = 0; deg < 360; deg += 30) {
+      for (const o of radii) {
+        seeds.push(destinationPoint(cam, o, (bearing + deg) % 360));
+      }
+    }
+    // Also force the cut *before* the camera along the route.
+    const along = destinationPoint(cam, 500, (bearing + 180) % 360);
+    for (const o of [600, 1200, 2000]) {
+      seeds.push(destinationPoint(along, o, (bearing + 270) % 360));
+      seeds.push(destinationPoint(along, o, (bearing + 90) % 360));
     }
   }
   return seeds;
@@ -465,28 +542,52 @@ export async function planRoute(
     };
   }
 
-  const maxDuration = fastest.durationSeconds * 2.8;
   let evals = 0;
   const seen = new Set<string>();
 
   const accept = (scored: ScoredRoute): boolean => {
-    if (scored.durationSeconds > maxDuration) return false;
     const fewestSoFar = Math.min(...candidates.map((c) => c.cameraCount));
-    // Drop obvious losers: more cameras than we've already cleared, or same
-    // cameras but much slower than a known peer.
+    // Clearing cameras is worth a long drive; leftover ALPRs are not.
+    const maxDur =
+      scored.cameraCount < fewestSoFar
+        ? fastest.durationSeconds * 5
+        : scored.cameraCount === 0
+          ? fastest.durationSeconds * 4.5
+          : fastest.durationSeconds * 2.6;
+    if (scored.durationSeconds > maxDur) return false;
+
+    // Dead-end → U-turn routes are almost never what you want.
+    if (scored.turnaroundPenalty >= 1) {
+      const cleanPeer = candidates.find(
+        (c) =>
+          c.turnaroundPenalty < 0.5 &&
+          c.cameraCount <= scored.cameraCount,
+      );
+      if (cleanPeer) return false;
+      // Even without a clean peer: never keep a turnaround that doesn't
+      // improve camera count vs what we already have.
+      if (scored.cameraCount >= fewestSoFar && fewestSoFar < Infinity) {
+        const anyClean = candidates.some((c) => c.turnaroundPenalty < 0.5);
+        if (anyClean) return false;
+      }
+    }
+
     if (scored.cameraCount > fewestSoFar + 1) return false;
-    const peer = candidates.find((c) => c.cameraCount === scored.cameraCount);
-    if (peer && scored.durationSeconds > peer.durationSeconds * 1.45) {
+    const peer = candidates.find(
+      (c) =>
+        c.cameraCount === scored.cameraCount &&
+        c.turnaroundPenalty <= scored.turnaroundPenalty,
+    );
+    if (
+      peer &&
+      scored.cameraCount > 0 &&
+      scored.durationSeconds > peer.durationSeconds * 1.5
+    ) {
       return false;
     }
+
     candidates.push(scored);
-    if (scored.cameraCount < best.cameraCount) best = scored;
-    else if (
-      scored.cameraCount === best.cameraCount &&
-      scored.durationSeconds < best.durationSeconds
-    ) {
-      best = scored;
-    }
+    if (isBetterThan(scored, best)) best = scored;
     return true;
   };
 
@@ -573,15 +674,20 @@ export async function planRoute(
   }
   best = pickBest(candidates);
 
-  // 4) Two-via combos (cut over, then cut back).
+  // 4) Two-via combos (cut over, then cut back). Prefer clean (no U-turn) singles.
   goodSingles.sort(
     (a, b) =>
       a.scored.cameraCount - b.scored.cameraCount ||
+      a.scored.turnaroundPenalty - b.scored.turnaroundPenalty ||
       a.scored.durationSeconds - b.scored.durationSeconds,
   );
   const comboAnchors = [
-    ...goodSingles.slice(0, 10).map((g) => g.via),
-    ...viaPool.slice(0, 14).map((v) => v.via),
+    ...goodSingles
+      .filter((g) => g.scored.turnaroundPenalty < 0.5)
+      .slice(0, 12)
+      .map((g) => g.via),
+    ...goodSingles.slice(0, 8).map((g) => g.via),
+    ...viaPool.slice(0, 16).map((v) => v.via),
   ];
   const anchorKeys = new Set<string>();
   const anchors: LatLng[] = [];
@@ -600,15 +706,12 @@ export async function planRoute(
       pairJobs.push(
         di <= dj ? [anchors[i], anchors[j]] : [anchors[j], anchors[i]],
       );
-      if (pairJobs.length >= 70) break;
+      if (pairJobs.length >= 80) break;
     }
-    if (pairJobs.length >= 70) break;
+    if (pairJobs.length >= 80) break;
   }
 
-  const pairBatch = pairJobs.slice(
-    0,
-    Math.max(0, MAX_ROUTE_EVALS - evals),
-  );
+  const pairBatch = pairJobs.slice(0, Math.max(0, MAX_ROUTE_EVALS - evals));
   const pairHits = await mapPool(pairBatch, PARALLEL_OSRM, async (pair) => {
     evals++;
     try {
@@ -627,27 +730,39 @@ export async function planRoute(
     if (scored) accept(scored);
   }
 
-  // 5) Escape remaining cameras on the current best avoidance path.
+  // 5) Siege the leftover cameras (that last Motorola). Keep going until
+  //    cleared or the eval budget is spent — zero cams beats a short route.
   best = pickBest(candidates);
-  if (best.cameraCount > 0 && evals < MAX_ROUTE_EVALS) {
+  let siegePasses = 0;
+  while (best.cameraCount > 0 && evals < MAX_ROUTE_EVALS && siegePasses < 3) {
+    siegePasses++;
     const escapeRaw = rawCameraEscapeSeeds(best.coordinates, cameras);
+    // Fresh seeds each pass — don't skip ones we already tried if clearance is high.
     const escapeSnapped = await mapPool(
-      escapeRaw.slice(0, 48),
+      escapeRaw.slice(0, 90),
       PARALLEL_OSRM,
       snapToRoad,
     );
-    const escapeVias: LatLng[] = [];
+    const escapeVias: { via: LatLng; clearance: number }[] = [];
+    const escapeSeen = new Set<string>();
     for (const s of escapeSnapped) {
       if (!s) continue;
       const k = viaKey(s);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      if (clearanceMeters(s, cameras) < 200) continue;
-      escapeVias.push(s);
+      if (escapeSeen.has(k)) continue;
+      escapeSeen.add(k);
+      const clr = clearanceMeters(s, cameras);
+      // Must be clear of the cameras we're dodging — not on the same block.
+      if (clr < 280) continue;
+      if (haversineMeters(s, origin) < 180) continue;
+      if (haversineMeters(s, destination) < 180) continue;
+      escapeVias.push({ via: s, clearance: clr });
     }
+    escapeVias.sort((a, b) => b.clearance - a.clearance);
 
+    const budget = Math.max(0, MAX_ROUTE_EVALS - evals);
+    const singleBudget = Math.min(escapeVias.length, Math.floor(budget * 0.55));
     const more = await mapPool(
-      escapeVias.slice(0, MAX_ROUTE_EVALS - evals),
+      escapeVias.slice(0, singleBudget).map((e) => e.via),
       PARALLEL_OSRM,
       async (via) => {
         evals++;
@@ -667,9 +782,57 @@ export async function planRoute(
     for (const scored of more) {
       if (scored) accept(scored);
     }
+    best = pickBest(candidates);
+    if (best.cameraCount === 0) break;
+
+    // Pair high-clearance escapes (cut around the camera early + late).
+    const topEsc = escapeVias.slice(0, 14).map((e) => e.via);
+    const siegePairs: LatLng[][] = [];
+    for (let i = 0; i < topEsc.length; i++) {
+      for (let j = i + 1; j < topEsc.length; j++) {
+        const di = haversineMeters(topEsc[i], origin);
+        const dj = haversineMeters(topEsc[j], origin);
+        siegePairs.push(
+          di <= dj ? [topEsc[i], topEsc[j]] : [topEsc[j], topEsc[i]],
+        );
+        if (siegePairs.length >= 40) break;
+      }
+      if (siegePairs.length >= 40) break;
+    }
+    const siegePairHits = await mapPool(
+      siegePairs.slice(0, Math.max(0, MAX_ROUTE_EVALS - evals)),
+      PARALLEL_OSRM,
+      async (pair) => {
+        evals++;
+        try {
+          const routes = await fetchOsrmWaypoints(
+            [origin, pair[0], pair[1], destination],
+            false,
+            false,
+          );
+          if (!routes.length) return null;
+          return scoreRoute(routes[0], cameras);
+        } catch {
+          return null;
+        }
+      },
+    );
+    for (const scored of siegePairHits) {
+      if (scored) accept(scored);
+    }
+    best = pickBest(candidates);
   }
 
+  // Prefer a clean (no turnaround) route when camera counts tie.
   best = pickBest(candidates);
+  const cleanZero = candidates
+    .filter((c) => c.cameraCount === best.cameraCount && c.turnaroundPenalty < 0.5)
+    .sort(
+      (a, b) =>
+        a.durationSeconds - b.durationSeconds ||
+        a.distanceMeters - b.distanceMeters,
+    )[0];
+  if (cleanZero) best = cleanZero;
 
   return {
     fastest,
