@@ -4,10 +4,13 @@ import { CameraGrid } from "@/services/geo";
 import { cameraFromFeatureProps } from "@/services/cameraParse";
 import {
   loadCameras,
+  loadCommunityCache,
   loadCustomCameras,
   saveCameras,
+  saveCommunityCache,
   saveCustomCameras,
 } from "@/services/storage";
+import { fetchCommunityCameras } from "@/services/community";
 import { updateCameras } from "@/services/sync";
 
 type Status = "idle" | "loading" | "ready" | "empty" | "error";
@@ -15,9 +18,11 @@ type Status = "idle" | "loading" | "ready" | "empty" | "error";
 interface CameraState {
   /** The bundled/live pack (excludes user-added cameras). */
   pack: CameraDataset | null;
+  /** Community-submitted cameras fetched from the shared GitHub dataset. */
+  community: Camera[];
   /** User-added cameras, persisted on device and merged into the map. */
   custom: Camera[];
-  /** Combined view (pack + custom) used by the map, grid and alerts. */
+  /** Combined view (pack + community + custom) used by map, grid and alerts. */
   dataset: CameraDataset | null;
   grid: CameraGrid | null;
   status: Status;
@@ -29,8 +34,18 @@ interface CameraState {
   removeCamera: (id: string) => Promise<void>;
 }
 
-function combine(pack: CameraDataset | null, custom: Camera[]): CameraDataset {
-  const cameras = [...(pack?.cameras ?? []), ...custom];
+function combine(
+  pack: CameraDataset | null,
+  community: Camera[],
+  custom: Camera[],
+): CameraDataset {
+  // Drop local customs that already exist in the shared dataset (e.g. after the
+  // user shared one and it was accepted) so they don't appear twice.
+  const key = (c: Camera) =>
+    `${c.kind}@${c.lat.toFixed(4)},${c.lon.toFixed(4)}`;
+  const shared = new Set(community.map(key));
+  const localOnly = custom.filter((c) => !shared.has(key(c)));
+  const cameras = [...(pack?.cameras ?? []), ...community, ...localOnly];
   return {
     generatedAt: pack?.generatedAt ?? new Date().toISOString(),
     syncedAt: pack?.syncedAt,
@@ -49,6 +64,7 @@ function normalizeDataset(dataset: CameraDataset): CameraDataset {
 
 export const useCameraStore = create<CameraState>((set, get) => ({
   pack: null,
+  community: [],
   custom: [],
   dataset: null,
   grid: null,
@@ -74,14 +90,29 @@ export const useCameraStore = create<CameraState>((set, get) => ({
         }
       }
       const custom = await loadCustomCameras();
-      const dataset = combine(pack, custom);
+      const community = await loadCommunityCache();
+      const dataset = combine(pack, community, custom);
       set({
         pack,
+        community,
         custom,
         dataset,
         grid: new CameraGrid(dataset.cameras),
         status: dataset.count > 0 ? "ready" : "empty",
         error: null,
+      });
+
+      // Refresh the shared community dataset in the background (non-blocking).
+      void fetchCommunityCameras().then((fresh) => {
+        if (!fresh) return;
+        void saveCommunityCache(fresh);
+        const next = combine(get().pack, fresh, get().custom);
+        set({
+          community: fresh,
+          dataset: next,
+          grid: new CameraGrid(next.cameras),
+          status: next.count > 0 ? "ready" : "empty",
+        });
       });
     } catch (e) {
       set({ status: "error", error: (e as Error).message });
@@ -92,10 +123,12 @@ export const useCameraStore = create<CameraState>((set, get) => ({
     set({ updating: true, error: null });
     try {
       const pack = await updateCameras(source);
-      const custom = get().custom;
-      const dataset = combine(pack, custom);
+      const community = (await fetchCommunityCameras()) ?? get().community;
+      void saveCommunityCache(community);
+      const dataset = combine(pack, community, get().custom);
       set({
         pack,
+        community,
         dataset,
         grid: new CameraGrid(dataset.cameras),
         status: dataset.count > 0 ? "ready" : "empty",
@@ -109,7 +142,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
   addCamera: async (camera) => {
     const custom = [...get().custom, camera];
     await saveCustomCameras(custom);
-    const dataset = combine(get().pack, custom);
+    const dataset = combine(get().pack, get().community, custom);
     set({
       custom,
       dataset,
@@ -121,7 +154,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
   removeCamera: async (id) => {
     const custom = get().custom.filter((c) => c.id !== id);
     await saveCustomCameras(custom);
-    const dataset = combine(get().pack, custom);
+    const dataset = combine(get().pack, get().community, custom);
     set({
       custom,
       dataset,

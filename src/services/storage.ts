@@ -65,6 +65,17 @@ export async function saveCustomCameras(cameras: Camera[]): Promise<void> {
   await (await db()).put("meta", cameras, "customCameras");
 }
 
+export async function loadCommunityCache(): Promise<Camera[]> {
+  const stored = (await (await db()).get("meta", "communityCameras")) as
+    | Camera[]
+    | undefined;
+  return stored ?? [];
+}
+
+export async function saveCommunityCache(cameras: Camera[]): Promise<void> {
+  await (await db()).put("meta", cameras, "communityCameras");
+}
+
 export async function loadSettings(): Promise<Settings> {
   const stored = (await (await db()).get("meta", "settings")) as Partial<Settings> | undefined;
   return { ...DEFAULT_SETTINGS, ...(stored ?? {}) };

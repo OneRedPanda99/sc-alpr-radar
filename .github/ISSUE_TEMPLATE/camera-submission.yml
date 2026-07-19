@@ -1,0 +1,44 @@
+name: Add a camera
+description: Submit a camera to the shared, open community dataset.
+title: "[camera] "
+labels: ["camera-submission"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Add a camera the map is missing. Once submitted, an automated check adds
+        it to the shared dataset and it appears for everyone within a minute.
+        The app pre-fills these fields when you tap **Share with everyone**.
+  - type: input
+    id: lat
+    attributes:
+      label: Latitude
+      description: Decimal degrees, e.g. 33.9744
+      placeholder: "33.9744"
+    validations:
+      required: true
+  - type: input
+    id: lon
+    attributes:
+      label: Longitude
+      description: Decimal degrees, e.g. -80.9680
+      placeholder: "-80.9680"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Type
+      options:
+        - alpr
+        - traffic
+        - speed
+    validations:
+      required: true
+  - type: input
+    id: name
+    attributes:
+      label: Name / location (optional)
+      placeholder: "Old Woodlands Rd"
+    validations:
+      required: false

@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Camera } from "@/types";
 import { brandImage, formatFacing, KIND_LABELS } from "@/services/brand";
 import { metersToFeet } from "@/services/geo";
+import { communitySubmitUrl } from "@/services/community";
 
 function subtitle(camera: Camera): string {
   return camera.kind === "alpr" ? camera.brand : KIND_LABELS[camera.kind];
@@ -150,10 +151,25 @@ export function CameraDetailCard({
             </div>
           )}
         </div>
-        {camera.custom && onDelete && (
-          <button className="detail-delete" onClick={() => onDelete(camera.id)}>
-            Delete this camera
-          </button>
+        {camera.custom && (
+          <div className="detail-actions">
+            <a
+              className="detail-share"
+              href={communitySubmitUrl(camera)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Share with everyone
+            </a>
+            {onDelete && (
+              <button
+                className="detail-delete"
+                onClick={() => onDelete(camera.id)}
+              >
+                Delete
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>

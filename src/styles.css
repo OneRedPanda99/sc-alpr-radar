@@ -187,10 +187,26 @@ body {
   border-color: var(--accent, #2f80ed);
 }
 
-.detail-delete {
+.detail-actions {
+  display: flex;
+  gap: 8px;
   margin-top: 12px;
-  width: 100%;
+}
+
+.detail-share {
+  flex: 1;
   padding: 10px;
+  border-radius: 10px;
+  background: rgba(47, 128, 237, 0.18);
+  color: #6fb0ff;
+  font-weight: 700;
+  font-size: 13px;
+  text-align: center;
+  text-decoration: none;
+}
+
+.detail-delete {
+  padding: 10px 14px;
   border: none;
   border-radius: 10px;
   background: rgba(255, 77, 77, 0.15);

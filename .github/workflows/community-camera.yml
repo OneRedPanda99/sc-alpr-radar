@@ -1,0 +1,65 @@
+name: Community camera submission
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: community-cameras
+  cancel-in-progress: false
+
+jobs:
+  add-camera:
+    if: contains(github.event.issue.labels.*.name, 'camera-submission')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Apply submission to dataset
+        id: apply
+        run: node scripts/apply-camera-issue.mjs
+
+      - name: Commit updated dataset
+        if: steps.apply.outputs.status == 'added'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data/community-cameras.json
+          git commit -m "Add community camera from #${{ github.event.issue.number }}"
+          git push
+
+      - name: Comment result
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = ${{ toJSON(steps.apply.outputs.status) }};
+            const message = ${{ toJSON(steps.apply.outputs.message) }};
+            const ok = status === 'added';
+            const dup = status === 'duplicate';
+            const body = ok
+              ? `✅ ${message}\n\nThanks! It will appear in the app for everyone within a minute.`
+              : dup
+                ? `ℹ️ ${message}`
+                : `⚠️ Could not add this camera: ${message}\n\nPlease edit the issue with valid values, or reopen with corrected coordinates.`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+            if (ok || dup) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                state: 'closed',
+              });
+            }
