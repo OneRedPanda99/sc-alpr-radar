@@ -93,4 +93,14 @@ export interface Settings {
   alertTraffic: boolean;
   /** Basemap style key. */
   basemap: "streets" | "satellite";
+  /** Route avoidance: Flock Safety plate readers. */
+  avoidFlock: boolean;
+  /** Route avoidance: other ALPRs (Motorola, Genetec, etc.). */
+  avoidOtherAlpr: boolean;
+  /** Route avoidance: traffic / DOT / CCTV cameras. */
+  avoidTraffic: boolean;
+  /** Route avoidance: cameras you added on this device. */
+  avoidCustom: boolean;
+  /** Route avoidance: community-submitted cameras. */
+  avoidCommunity: boolean;
 }

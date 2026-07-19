@@ -20,6 +20,11 @@ function pickSettings(s: Settings): Settings {
     showTraffic: s.showTraffic,
     alertTraffic: s.alertTraffic,
     basemap: s.basemap,
+    avoidFlock: s.avoidFlock,
+    avoidOtherAlpr: s.avoidOtherAlpr,
+    avoidTraffic: s.avoidTraffic,
+    avoidCustom: s.avoidCustom,
+    avoidCommunity: s.avoidCommunity,
   };
 }
 

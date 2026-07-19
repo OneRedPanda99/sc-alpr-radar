@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { LatLng, SavedRoute } from "@/types";
+import type { Camera, LatLng, SavedRoute } from "@/types";
 import { MapView } from "@/components/MapView";
 import { useCameraStore } from "@/store/cameraStore";
 import { useSettingsStore } from "@/store/settingsStore";
-import { useGeolocation } from "@/hooks/useGeolocation";
 import {
   camerasNearRoute,
   formatDistance,
@@ -22,6 +21,26 @@ interface RouteModeProps {
 
 type Place = { label: string; point: LatLng };
 
+function shouldAvoidCamera(
+  c: Camera,
+  s: {
+    avoidFlock: boolean;
+    avoidOtherAlpr: boolean;
+    avoidTraffic: boolean;
+    avoidCustom: boolean;
+    avoidCommunity: boolean;
+  },
+): boolean {
+  if (c.custom) return s.avoidCustom;
+  if (c.id.startsWith("community/")) return s.avoidCommunity;
+  if (c.kind === "alpr" || c.kind === "speed") {
+    if (c.brand === "Flock Safety") return s.avoidFlock;
+    return s.avoidOtherAlpr;
+  }
+  // traffic / CCTV / SCDOT
+  return s.avoidTraffic;
+}
+
 export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
   const { dataset } = useCameraStore();
   const showFov = useSettingsStore((s) => s.showFov);
@@ -29,7 +48,13 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
   const showTraffic = useSettingsStore((s) => s.showTraffic);
   const flockOnly = useSettingsStore((s) => s.flockOnly);
   const basemap = useSettingsStore((s) => s.basemap);
-  const { fix } = useGeolocation({ enabled: true });
+  const avoidFlock = useSettingsStore((s) => s.avoidFlock);
+  const avoidOtherAlpr = useSettingsStore((s) => s.avoidOtherAlpr);
+  const avoidTraffic = useSettingsStore((s) => s.avoidTraffic);
+  const avoidCustom = useSettingsStore((s) => s.avoidCustom);
+  const avoidCommunity = useSettingsStore((s) => s.avoidCommunity);
+
+  const [gpsPoint, setGpsPoint] = useState<LatLng | null>(null);
 
   const mapCameras = useMemo(() => {
     if (!dataset) return [];
@@ -40,20 +65,24 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
     );
   }, [dataset, showAlpr, showTraffic, flockOnly]);
 
-  // Avoidance weighs plate readers, cameras you added, and community submissions
-  // (not bulk SCDOT traffic cams — those aren't surveillance to avoid).
   const routeCameras = useMemo(() => {
     if (!dataset) return [];
-    return dataset.cameras.filter((c) => {
-      const isCommunity = c.id.startsWith("community/");
-      const counts =
-        c.custom || isCommunity || c.kind === "alpr";
-      if (!counts) return false;
-      if (flockOnly && c.brand !== "Flock Safety" && !c.custom && !isCommunity)
-        return false;
-      return true;
-    });
-  }, [dataset, flockOnly]);
+    const opts = {
+      avoidFlock,
+      avoidOtherAlpr,
+      avoidTraffic,
+      avoidCustom,
+      avoidCommunity,
+    };
+    return dataset.cameras.filter((c) => shouldAvoidCamera(c, opts));
+  }, [
+    dataset,
+    avoidFlock,
+    avoidOtherAlpr,
+    avoidTraffic,
+    avoidCustom,
+    avoidCommunity,
+  ]);
 
   const [fromQuery, setFromQuery] = useState("");
   const [toQuery, setToQuery] = useState("");
@@ -70,54 +99,44 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
   const [showSteps, setShowSteps] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
 
-  const fromTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const toTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchSeq = useRef(0);
+  const toInputRef = useRef<HTMLInputElement>(null);
+  const fromInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void listRoutes().then(setSaved);
   }, []);
 
-  const runSearch = async (
-    which: "from" | "to",
-    query: string,
-    autoPickSingle: boolean,
-  ) => {
+  const runSearch = async (which: "from" | "to", query: string) => {
     const q = query.trim();
     if (!q || q === "Current location") {
       if (which === "from") setFromResults([]);
       else setToResults([]);
       return;
     }
+    const seq = ++searchSeq.current;
     setSearching(which);
     setError(null);
+    setActiveField(which);
     try {
-      const results = await geocode(q, fix?.point ?? from?.point);
+      const results = await geocode(q, gpsPoint ?? from?.point ?? null);
+      if (seq !== searchSeq.current) return; // stale
       if (!results.length) {
-        setError("No places found — try a street address + city (e.g. Columbia SC).");
+        setError(
+          "No places found. Try: street number + street + city, e.g. 1600 Main St, Columbia SC",
+        );
         if (which === "from") setFromResults([]);
         else setToResults([]);
         return;
       }
-      if (autoPickSingle && results.length === 1) {
-        pickPlace(which, results[0]);
-        return;
-      }
       if (which === "from") setFromResults(results);
       else setToResults(results);
-      setActiveField(which);
     } catch (e) {
+      if (seq !== searchSeq.current) return;
       setError((e as Error).message);
     } finally {
-      setSearching(null);
+      if (seq === searchSeq.current) setSearching(null);
     }
-  };
-
-  const scheduleSearch = (which: "from" | "to", query: string) => {
-    const timer = which === "from" ? fromTimer : toTimer;
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      void runSearch(which, query, false);
-    }, 400);
   };
 
   const pickPlace = (which: "from" | "to", place: Place) => {
@@ -135,11 +154,23 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
   };
 
   const useGpsOrigin = () => {
-    if (!fix) {
-      setError("GPS not ready yet — allow location, or type a starting address.");
+    if (!("geolocation" in navigator)) {
+      setError("Geolocation not supported on this device.");
       return;
     }
-    pickPlace("from", { label: "Current location", point: fix.point });
+    setError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const point = {
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+        };
+        setGpsPoint(point);
+        pickPlace("from", { label: "Current location", point });
+      },
+      (err) => setError(`GPS: ${err.message}`),
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 15000 },
+    );
   };
 
   useEffect(() => {
@@ -180,20 +211,17 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
     setSaved(await listRoutes());
   };
 
-  const results =
-    activeField === "from"
-      ? fromResults
-      : activeField === "to"
-        ? toResults
-        : [];
-
-  // Cameras still on the avoidance path (highlighted on the map).
   const highlightIds = useMemo(() => {
     if (!plan) return undefined;
     return new Set(
-      camerasNearRoute(plan.avoidance.coordinates, routeCameras).map((c) => c.id),
+      camerasNearRoute(plan.avoidance.coordinates, routeCameras).map(
+        (c) => c.id,
+      ),
     );
   }, [plan, routeCameras]);
+
+  const showingFromResults = activeField === "from" && fromResults.length > 0;
+  const showingToResults = activeField === "to" && toResults.length > 0;
 
   return (
     <div className="mode route-mode">
@@ -201,14 +229,17 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
         <MapView
           cameras={mapCameras}
           highlightIds={highlightIds}
-          center={from?.point ?? fix?.point ?? null}
+          center={from?.point ?? gpsPoint}
           showFov={showFov}
           basemap={basemap}
           routeLine={plan?.avoidance.coordinates ?? null}
           fitRoute
         />
         {!panelOpen && (
-          <button className="route-sheet-toggle" onClick={() => setPanelOpen(true)}>
+          <button
+            className="route-sheet-toggle"
+            onClick={() => setPanelOpen(true)}
+          >
             Show route
           </button>
         )}
@@ -231,79 +262,113 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
             <div className="place-row">
               <span className="place-dot origin" />
               <input
+                ref={fromInputRef}
                 className="search-input"
-                placeholder="Start address (or tap GPS)"
+                placeholder="Type a start address"
                 value={fromQuery}
-                autoComplete="street-address"
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
                 enterKeyHint="search"
                 onFocus={() => setActiveField("from")}
                 onChange={(e) => {
                   const v = e.target.value;
                   setFromQuery(v);
-                  if (from && v !== from.label) setFrom(null);
-                  scheduleSearch("from", v);
+                  if (from) setFrom(null);
+                  setFromResults([]);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    void runSearch("from", fromQuery, true);
+                    void runSearch("from", fromQuery);
                   }
                 }}
               />
-              <button className="ghost-btn" onClick={useGpsOrigin} title="Use GPS">
+              <button
+                type="button"
+                className="search-btn"
+                onClick={() => void runSearch("from", fromQuery)}
+              >
+                {searching === "from" ? "…" : "Search"}
+              </button>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={useGpsOrigin}
+                title="Use current GPS"
+              >
                 GPS
               </button>
             </div>
+
+            {showingFromResults && (
+              <ResultList
+                items={fromResults}
+                onPick={(p) => {
+                  pickPlace("from", p);
+                  toInputRef.current?.focus();
+                }}
+              />
+            )}
+
             <div className="place-row">
               <span className="place-dot dest" />
               <input
+                ref={toInputRef}
                 className="search-input"
-                placeholder="Destination — e.g. 1600 Main St, Columbia"
+                placeholder="Type a destination address"
                 value={toQuery}
-                autoComplete="street-address"
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
                 enterKeyHint="search"
                 onFocus={() => setActiveField("to")}
                 onChange={(e) => {
                   const v = e.target.value;
                   setToQuery(v);
-                  if (to && v !== to.label) setTo(null);
-                  scheduleSearch("to", v);
+                  if (to) setTo(null);
+                  setToResults([]);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    void runSearch("to", toQuery, true);
+                    void runSearch("to", toQuery);
                   }
                 }}
               />
               <button
+                type="button"
                 className="search-btn"
-                onClick={() => void runSearch("to", toQuery, true)}
+                onClick={() => void runSearch("to", toQuery)}
               >
-                {searching ? "…" : "Go"}
+                {searching === "to" ? "…" : "Search"}
               </button>
             </div>
+
+            {showingToResults && (
+              <ResultList
+                items={toResults}
+                onPick={(p) => pickPlace("to", p)}
+              />
+            )}
+
             <p className="place-hint">
-              Type any start and destination address. GPS is optional (button
-              only) — it will not overwrite what you type.
+              Type an address, tap <strong>Search</strong>, then tap a result.
+              GPS is optional for start only.
             </p>
           </div>
 
-          {searching && <div className="info">Searching places…</div>}
-
-          {results.length > 0 && activeField && (
-            <ResultList
-              items={results}
-              onPick={(p) => pickPlace(activeField, p)}
-            />
-          )}
-
+          {searching && <div className="info">Searching addresses…</div>}
           {busy && (
             <div className="info">
               Deep search — maximizing camera avoidance (can take a minute)…
             </div>
           )}
           {error && <div className="hud-error">{error}</div>}
+
+          {from && to && !plan && !busy && !error && (
+            <div className="info">Ready — calculating when both ends are set…</div>
+          )}
 
           {plan && to && (
             <div className="plan-card">
@@ -325,10 +390,10 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
               </div>
               <div className="plan-note">
                 {plan.camerasUnavoidable === 0
-                  ? "Avoidance route clears the cameras we can route around."
+                  ? "Avoidance route clears the cameras selected in Settings."
                   : plan.camerasUnavoidable < plan.camerasOnFastest
-                    ? `Detoured some cameras — ${plan.camerasUnavoidable} still on this path (highlighted). Drive will alert for them.`
-                    : `${plan.camerasUnavoidable} camera(s) couldn't be avoided on any detour tried — they're highlighted on the map.`}
+                    ? `Detoured some cameras — ${plan.camerasUnavoidable} still on this path (highlighted).`
+                    : `${plan.camerasUnavoidable} camera(s) couldn't be avoided — highlighted on the map.`}
               </div>
 
               {plan.avoidance.steps.length > 0 && (

@@ -571,75 +571,108 @@ function formatPhotonLabel(p: Record<string, unknown>, fallback: string): string
   return parts.join(", ") || fallback;
 }
 
-/** Bias free-text toward South Carolina when the user omits it. */
 function withScHint(query: string): string {
   const q = query.trim();
   if (/\b(sc|s\.?c\.?|south carolina)\b/i.test(q)) return q;
-  return `${q}, South Carolina`;
+  return `${q}, SC`;
 }
 
 function parsePhotonFeatures(
   features: any[],
   fallback: string,
-  preferSc: boolean,
 ): { label: string; point: LatLng }[] {
-  return (features ?? [])
-    .map((f) => {
-      const [lon, lat] = f.geometry?.coordinates ?? [];
-      if (lon == null || lat == null) return null;
-      const p = f.properties ?? {};
-      if (p.country && p.country !== "United States" && p.countrycode !== "US") {
-        return null;
-      }
-      if (
-        preferSc &&
-        p.state &&
-        !/south carolina|^sc$/i.test(String(p.state))
-      ) {
-        return null;
-      }
-      return {
-        label: formatPhotonLabel(p, fallback),
-        point: { lat: Number(lat), lon: Number(lon) },
-      };
-    })
-    .filter(Boolean) as { label: string; point: LatLng }[];
+  const out: { label: string; point: LatLng; sc: boolean }[] = [];
+  for (const f of features ?? []) {
+    const [lon, lat] = f.geometry?.coordinates ?? [];
+    if (lon == null || lat == null) continue;
+    const p = f.properties ?? {};
+    if (p.country && p.country !== "United States" && p.countrycode !== "US") {
+      continue;
+    }
+    const state = String(p.state ?? "");
+    const sc = !state || /south carolina|^sc$/i.test(state);
+    // Soft SC window — keep near-misses if nothing better, but prefer SC.
+    if (
+      Number(lat) < 31.5 ||
+      Number(lat) > 35.8 ||
+      Number(lon) < -84.0 ||
+      Number(lon) > -78.0
+    ) {
+      continue;
+    }
+    out.push({
+      label: formatPhotonLabel(p, fallback),
+      point: { lat: Number(lat), lon: Number(lon) },
+      sc,
+    });
+  }
+  out.sort((a, b) => Number(b.sc) - Number(a.sc));
+  return out.map(({ label, point }) => ({ label, point }));
 }
 
 async function geocodePhoton(
   query: string,
   near?: LatLng | null,
-  useBbox = true,
 ): Promise<{ label: string; point: LatLng }[]> {
   const bias = near ?? SC_CENTER;
   const params = new URLSearchParams({
     q: query,
-    limit: "8",
+    limit: "10",
     lat: String(bias.lat),
     lon: String(bias.lon),
   });
-  // Prefer SC results when possible; retry without bbox if empty.
-  if (useBbox) params.set("bbox", "-83.6,32.0,-78.4,35.3");
-
   const res = await fetch(`${PHOTON_BASE}?${params}`);
-  if (!res.ok) throw new Error(`Geocoding failed (${res.status})`);
+  if (!res.ok) throw new Error(`Address search failed (${res.status})`);
   const json = await res.json();
-  return parsePhotonFeatures(json.features, query, useBbox);
+  return parsePhotonFeatures(json.features, query);
 }
 
-/** Geocode an address / place via Photon (Komoot), biased to South Carolina. */
+/**
+ * Geocode an address / place. Tries several query shapes so street addresses
+ * work even when Photon is picky about formatting.
+ */
 export async function geocode(
   query: string,
   near?: LatLng | null,
 ): Promise<{ label: string; point: LatLng }[]> {
   const raw = query.trim();
-  if (!raw) return [];
+  if (!raw || raw.length < 2) return [];
 
-  const q = withScHint(raw);
-  let results = await geocodePhoton(q, near, true);
-  if (!results.length) results = await geocodePhoton(q, near, false);
-  if (!results.length && q !== raw) results = await geocodePhoton(raw, near, false);
-  return results;
+  const attempts = [
+    withScHint(raw),
+    `${raw}, Columbia, SC`,
+    raw,
+    raw.replace(/\bstreet\b/gi, "St").replace(/\bavenue\b/gi, "Ave"),
+  ];
+  // Unique preserve order
+  const seen = new Set<string>();
+  const queries = attempts.filter((q) => {
+    const k = q.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  for (const q of queries) {
+    try {
+      const results = await geocodePhoton(q, near);
+      if (results.length) {
+        // Dedupe by rounded coords
+        const uniq: { label: string; point: LatLng }[] = [];
+        const keys = new Set<string>();
+        for (const r of results) {
+          const k = `${r.point.lat.toFixed(5)},${r.point.lon.toFixed(5)}`;
+          if (keys.has(k)) continue;
+          keys.add(k);
+          uniq.push(r);
+        }
+        return uniq;
+      }
+    } catch {
+      // try next shape
+    }
+  }
+  return [];
 }
 
 export function formatDistance(m: number): string {

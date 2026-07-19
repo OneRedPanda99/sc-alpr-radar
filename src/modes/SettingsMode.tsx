@@ -63,6 +63,38 @@ export function SettingsMode() {
       </section>
 
       <section className="setting-group">
+        <h3>Route avoidance</h3>
+        <p className="tip" style={{ marginTop: 0 }}>
+          Choose which cameras the router tries to detour around.
+        </p>
+        <Toggle
+          label="Avoid Flock cameras"
+          checked={s.avoidFlock}
+          onChange={(v) => s.set("avoidFlock", v)}
+        />
+        <Toggle
+          label="Avoid other ALPRs (Motorola, etc.)"
+          checked={s.avoidOtherAlpr}
+          onChange={(v) => s.set("avoidOtherAlpr", v)}
+        />
+        <Toggle
+          label="Avoid traffic / DOT cameras"
+          checked={s.avoidTraffic}
+          onChange={(v) => s.set("avoidTraffic", v)}
+        />
+        <Toggle
+          label="Avoid cameras I added"
+          checked={s.avoidCustom}
+          onChange={(v) => s.set("avoidCustom", v)}
+        />
+        <Toggle
+          label="Avoid community cameras"
+          checked={s.avoidCommunity}
+          onChange={(v) => s.set("avoidCommunity", v)}
+        />
+      </section>
+
+      <section className="setting-group">
         <h3>Map</h3>
         <label className="setting">
           <span>Basemap</span>

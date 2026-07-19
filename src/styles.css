@@ -716,7 +716,18 @@ body {
 .place-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+}
+
+.place-row .search-btn {
+  flex-shrink: 0;
+  padding: 12px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.place-row .ghost-btn {
+  flex-shrink: 0;
 }
 
 .place-dot {
@@ -763,24 +774,32 @@ body {
 
 .results {
   list-style: none;
-  margin: 10px 0;
+  margin: 0;
   padding: 0;
-  max-height: 40vh;
+  max-height: 36vh;
   overflow-y: auto;
+  border: 1px solid rgba(47, 128, 237, 0.35);
+  border-radius: 12px;
+  background: rgba(7, 16, 28, 0.96);
 }
 
 .results li button {
   width: 100%;
   text-align: left;
   padding: 14px 12px;
-  background: var(--panel-solid);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0;
   color: var(--text);
-  margin-bottom: 6px;
+  margin-bottom: 0;
   font-size: 15px;
   line-height: 1.35;
   font-family: inherit;
+}
+
+.results li:last-child button {
+  border-bottom: none;
 }
 
 .results li button:active {

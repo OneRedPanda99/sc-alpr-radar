@@ -44,6 +44,11 @@ export const DEFAULT_SETTINGS: Settings = {
   showTraffic: true,
   alertTraffic: false,
   basemap: "streets",
+  avoidFlock: true,
+  avoidOtherAlpr: true,
+  avoidTraffic: false,
+  avoidCustom: true,
+  avoidCommunity: true,
 };
 
 export async function loadCameras(): Promise<CameraDataset | undefined> {
