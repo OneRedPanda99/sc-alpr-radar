@@ -11,22 +11,19 @@ import {
  *  - Geocode: Photon (Komoot) — CORS-friendly, OSM-based
  *  - Directions: public OSRM demo — geometries + turn-by-turn steps
  *
- * Avoidance is thorough and slow on purpose: iteratively stack via-points
- * around every camera still on the path until camera count stops improving.
- * Duration is almost ignored — fewer cameras always wins.
+ * Avoidance explores road-snapped parallel corridors (like a human picking an
+ * alternate arterial), not random field offsets. Rank: fewest cameras, then
+ * shortest time among those.
  */
 
 const OSRM_BASE = "https://router.project-osrm.org/route/v1/driving";
+const OSRM_NEAREST = "https://router.project-osrm.org/nearest/v1/driving";
 const PHOTON_BASE = "https://photon.komoot.io/api/";
 /** How close a camera must be to the path to "count" (~500 ft). */
 const CORRIDOR_METERS = feetToMeters(500);
-/** Cameras considered per search round (spread along the route). */
-const MAX_DETOUR_CAMERAS = 14;
-/** Deep search budget — user prefers max avoidance over speed. */
-const MAX_DETOUR_REQUESTS = 240;
-const MAX_REQUESTS_PER_ROUND = 48;
-const MAX_AVOID_ROUNDS = 18;
-const PARALLEL_OSRM = 6;
+const PARALLEL_OSRM = 5;
+/** Max route evaluations while searching for a better avoidance path. */
+const MAX_ROUTE_EVALS = 200;
 
 // Rough SC bias for Photon results.
 const SC_CENTER = { lat: 33.8361, lon: -81.1637 };
@@ -188,6 +185,8 @@ function extractSteps(route: OsrmRoute): RouteStep[] {
 async function fetchOsrmWaypoints(
   points: LatLng[],
   alternatives: boolean,
+  /** false = allow sharp turns at vias (needed for parallel-road detours). */
+  continueStraight = false,
 ): Promise<OsrmRoute[]> {
   if (points.length < 2) return [];
   const coords = points.map((p) => `${p.lon},${p.lat}`).join(";");
@@ -195,7 +194,7 @@ async function fetchOsrmWaypoints(
     `${OSRM_BASE}/${coords}` +
     `?overview=full&geometries=geojson&steps=true` +
     `&alternatives=${alternatives ? "true" : "false"}` +
-    `&continue_straight=true`;
+    `&continue_straight=${continueStraight ? "true" : "false"}`;
 
   const res = await fetch(url);
   if (!res.ok) {
@@ -210,6 +209,24 @@ async function fetchOsrmWaypoints(
   return json.routes as OsrmRoute[];
 }
 
+/** Snap a lat/lon onto the nearest drivable road (rejects far snaps). */
+async function snapToRoad(point: LatLng): Promise<LatLng | null> {
+  try {
+    const url = `${OSRM_NEAREST}/${point.lon},${point.lat}?number=1`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const wp = json.waypoints?.[0];
+    if (!wp?.location || typeof wp.distance !== "number") return null;
+    // If nearest road is >400m away, this isn't a useful via.
+    if (wp.distance > 400) return null;
+    const [lon, lat] = wp.location as [number, number];
+    return { lat, lon };
+  } catch {
+    return null;
+  }
+}
+
 function scoreRoute(route: OsrmRoute, cameras: Camera[]): ScoredRoute {
   return {
     coordinates: route.geometry.coordinates,
@@ -220,6 +237,7 @@ function scoreRoute(route: OsrmRoute, cameras: Camera[]): ScoredRoute {
   };
 }
 
+/** Fewest cameras, then fastest — the tradeoff you actually want when driving. */
 function pickBest(scored: ScoredRoute[]): ScoredRoute {
   return [...scored].sort(
     (a, b) =>
@@ -229,109 +247,161 @@ function pickBest(scored: ScoredRoute[]): ScoredRoute {
   )[0];
 }
 
-/** Bearing of the route segment nearest to a camera. */
-function routeBearingNear(
-  coordinates: [number, number][],
-  camera: Camera,
-): number {
+function viaKey(v: LatLng): string {
+  return `${v.lat.toFixed(4)},${v.lon.toFixed(4)}`;
+}
+
+/** Min distance from a point to any camera. */
+function clearanceMeters(point: LatLng, cameras: Camera[]): number {
   let best = Infinity;
-  let bearing = 0;
-  for (let i = 1; i < coordinates.length; i++) {
-    const a = { lat: coordinates[i - 1][1], lon: coordinates[i - 1][0] };
-    const b = { lat: coordinates[i][1], lon: coordinates[i][0] };
-    const d = distanceToSegment(camera, a, b);
-    if (d < best) {
-      best = d;
-      bearing = bearingDeg(a, b);
-    }
+  for (const c of cameras) {
+    const d = haversineMeters(point, c);
+    if (d < best) best = d;
   }
-  return bearing;
+  return best;
 }
 
-/** Index of the path vertex nearest to a point. */
-function nearestPathIndex(
-  coordinates: [number, number][],
-  point: LatLng,
-): number {
-  let bestI = 0;
-  let bestD = Infinity;
-  for (let i = 0; i < coordinates.length; i++) {
-    const d = haversineMeters(point, {
-      lat: coordinates[i][1],
-      lon: coordinates[i][0],
-    });
-    if (d < bestD) {
-      bestD = d;
-      bestI = i;
+/**
+ * Candidate vias along parallel corridors: sample along the straight line and
+ * along the fastest path, offset left/right onto nearby roads.
+ */
+function rawCorridorSeeds(
+  origin: LatLng,
+  destination: LatLng,
+  fastestCoords: [number, number][],
+): LatLng[] {
+  const seeds: LatLng[] = [];
+  const tripBearing = bearingDeg(origin, destination);
+  const left = (tripBearing + 270) % 360;
+  const right = (tripBearing + 90) % 360;
+  // Tighter + wider bands — catch the next block over AND farther arterials.
+  const offsets = [250, 450, 700, 1000, 1400, 1900, 2600, 3500];
+  const fracs = [0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85];
+
+  // Straight-line corridors (parallel arterials humans pick by eye).
+  const tripDist = haversineMeters(origin, destination);
+  for (const f of fracs) {
+    const along = destinationPoint(origin, tripDist * f, tripBearing);
+    for (const o of offsets) {
+      seeds.push(destinationPoint(along, o, left));
+      seeds.push(destinationPoint(along, o, right));
     }
   }
-  return bestI;
+
+  // Offsets from the fastest route itself (escape onto a parallel street).
+  if (fastestCoords.length > 4) {
+    for (const f of fracs) {
+      const idx = Math.min(
+        fastestCoords.length - 1,
+        Math.max(1, Math.floor(f * (fastestCoords.length - 1))),
+      );
+      const pt = {
+        lat: fastestCoords[idx][1],
+        lon: fastestCoords[idx][0],
+      };
+      const prev = {
+        lat: fastestCoords[Math.max(0, idx - 1)][1],
+        lon: fastestCoords[Math.max(0, idx - 1)][0],
+      };
+      const brg = bearingDeg(prev, pt);
+      for (const o of [300, 550, 900, 1400, 2000, 2800]) {
+        seeds.push(destinationPoint(pt, o, (brg + 270) % 360));
+        seeds.push(destinationPoint(pt, o, (brg + 90) % 360));
+      }
+    }
+  }
+
+  return seeds;
 }
 
-/** Spread cameras along the route so we don't detour the same cluster twice. */
-function pickDetourTargets(
+/**
+ * Continuous parallel bands: 2–3 vias along the same offset so OSRM stays on
+ * that arterial for the middle of the trip (what you "see" on the map).
+ */
+function rawParallelBands(
+  origin: LatLng,
+  destination: LatLng,
+): LatLng[][] {
+  const tripBearing = bearingDeg(origin, destination);
+  const tripDist = haversineMeters(origin, destination);
+  const bands: LatLng[][] = [];
+  const sides = [(tripBearing + 270) % 360, (tripBearing + 90) % 360];
+  const offsets = [400, 800, 1200, 1800, 2500, 3400];
+  const chainFracs = [
+    [0.3, 0.55, 0.75],
+    [0.25, 0.5, 0.7],
+    [0.35, 0.65],
+  ];
+
+  for (const side of sides) {
+    for (const o of offsets) {
+      for (const fracs of chainFracs) {
+        bands.push(
+          fracs.map((f) => {
+            const along = destinationPoint(origin, tripDist * f, tripBearing);
+            return destinationPoint(along, o, side);
+          }),
+        );
+      }
+    }
+  }
+  return bands;
+}
+
+/** Extra seeds that dodge specific cameras still on the current best path. */
+function rawCameraEscapeSeeds(
   coordinates: [number, number][],
   cameras: Camera[],
-  max = MAX_DETOUR_CAMERAS,
-): Camera[] {
+): LatLng[] {
   const onRoute = camerasNearRoute(coordinates, cameras);
   if (!onRoute.length) return [];
-
+  // Spread along route
   const ranked = onRoute
-    .map((cam) => ({ cam, bestI: nearestPathIndex(coordinates, cam) }))
+    .map((cam) => {
+      let bestI = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < coordinates.length; i++) {
+        const d = haversineMeters(cam, {
+          lat: coordinates[i][1],
+          lon: coordinates[i][0],
+        });
+        if (d < bestD) {
+          bestD = d;
+          bestI = i;
+        }
+      }
+      return { cam, bestI };
+    })
     .sort((a, b) => a.bestI - b.bestI);
 
   const picked: Camera[] = [];
   for (const { cam } of ranked) {
-    if (picked.length >= max) break;
-    // Tight cluster merge — still try each dense pocket separately.
-    const tooClose = picked.some((p) => haversineMeters(p, cam) < 140);
-    if (!tooClose) picked.push(cam);
+    if (picked.length >= 10) break;
+    if (picked.some((p) => haversineMeters(p, cam) < 180)) continue;
+    picked.push(cam);
   }
-  return picked;
-}
 
-/** Many via points around a camera — near and far, both sides. */
-function detourVias(camera: Camera, routeBearing: number): LatLng[] {
-  const angles = [
-    (routeBearing + 270) % 360, // left
-    (routeBearing + 90) % 360, // right
-    (routeBearing + 225) % 360,
-    (routeBearing + 135) % 360,
-    (routeBearing + 240) % 360,
-    (routeBearing + 120) % 360,
-    (routeBearing + 300) % 360,
-    (routeBearing + 60) % 360,
-  ];
-  const distances = [350, 550, 800, 1200, 1800, 2600];
-  const out: LatLng[] = [];
-  for (const d of distances) {
-    for (const a of angles) {
-      out.push(destinationPoint(camera, d, a));
+  const seeds: LatLng[] = [];
+  for (const cam of picked) {
+    let bearing = 0;
+    let best = Infinity;
+    for (let i = 1; i < coordinates.length; i++) {
+      const a = { lat: coordinates[i - 1][1], lon: coordinates[i - 1][0] };
+      const b = { lat: coordinates[i][1], lon: coordinates[i][0] };
+      const d = distanceToSegment(cam, a, b);
+      if (d < best) {
+        best = d;
+        bearing = bearingDeg(a, b);
+      }
+    }
+    for (const o of [600, 1000, 1600, 2400]) {
+      seeds.push(destinationPoint(cam, o, (bearing + 270) % 360));
+      seeds.push(destinationPoint(cam, o, (bearing + 90) % 360));
+      seeds.push(destinationPoint(cam, o, (bearing + 225) % 360));
+      seeds.push(destinationPoint(cam, o, (bearing + 135) % 360));
     }
   }
-  return out;
-}
-
-/** Keep vias ordered along the route and drop near-duplicates. */
-function mergeViasAlongRoute(
-  existing: LatLng[],
-  next: LatLng,
-  routeCoords: [number, number][],
-): LatLng[] {
-  const all = [...existing, next];
-  const ranked = all
-    .map((v) => ({ v, i: nearestPathIndex(routeCoords, v) }))
-    .sort((a, b) => a.i - b.i);
-  const out: LatLng[] = [];
-  for (const { v } of ranked) {
-    if (!out.some((p) => haversineMeters(p, v) < 120)) out.push(v);
-  }
-  return out.slice(0, 10); // OSRM waypoint practical limit
-}
-
-function viaKey(v: LatLng): string {
-  return `${v.lat.toFixed(4)},${v.lon.toFixed(4)}`;
+  return seeds;
 }
 
 async function mapPool<T, R>(
@@ -370,7 +440,7 @@ export async function planRoute(
     throw new Error("Origin and destination are too close together.");
   }
 
-  const baseRoutes = await fetchOsrmWaypoints([origin, destination], true);
+  const baseRoutes = await fetchOsrmWaypoints([origin, destination], true, true);
   if (!baseRoutes.length) {
     throw new Error(
       "No driving route found between those points. Try a more specific address.",
@@ -380,158 +450,226 @@ export async function planRoute(
   const candidates: ScoredRoute[] = baseRoutes.map((r) =>
     scoreRoute(r, cameras),
   );
-  const fastest = candidates[0];
+  // OSRM returns fastest first among alternatives — keep that as the baseline.
+  const fastest = [...candidates].sort(
+    (a, b) => a.durationSeconds - b.durationSeconds,
+  )[0];
   let best = pickBest(candidates);
-  let committedVias: LatLng[] = [];
-  let requests = 0;
-  const triedVias = new Set<string>();
 
-  // Deep iterative avoidance: each round finds a via that lowers camera count,
-  // commits it, and repeats until zero cameras or no further improvement.
-  for (
-    let round = 0;
-    round < MAX_AVOID_ROUNDS &&
-    best.cameraCount > 0 &&
-    cameras.length > 0 &&
-    requests < MAX_DETOUR_REQUESTS;
-    round++
-  ) {
-    const targets = pickDetourTargets(best.coordinates, cameras);
-    if (!targets.length) break;
-
-    // Build via candidates per camera, then round-robin so every camera gets
-    // tries before we burn the whole budget on one cluster.
-    const perCamVias: LatLng[][] = targets.map((cam) => {
-      const bearing = routeBearingNear(best.coordinates, cam);
-      return detourVias(cam, bearing).filter((via) => {
-        if (haversineMeters(via, origin) < 150) return false;
-        if (haversineMeters(via, destination) < 150) return false;
-        const key = viaKey(via);
-        if (triedVias.has(key)) return false;
-        triedVias.add(key);
-        return true;
-      });
-    });
-
-    const viaJobs: LatLng[] = [];
-    for (let i = 0; i < 64; i++) {
-      let added = false;
-      for (const list of perCamVias) {
-        if (i < list.length) {
-          viaJobs.push(list[i]);
-          added = true;
-        }
-      }
-      if (!added) break;
-    }
-
-    if (!viaJobs.length) break;
-
-    const budget = Math.min(
-      viaJobs.length,
-      MAX_REQUESTS_PER_ROUND,
-      MAX_DETOUR_REQUESTS - requests,
-    );
-    const batch = viaJobs.slice(0, budget);
-    requests += batch.length;
-
-    const scoredBatch = await mapPool(batch, PARALLEL_OSRM, async (via) => {
-      const points = [origin, ...committedVias, via, destination];
-      if (points.length > 12) return null;
-      try {
-        const routes = await fetchOsrmWaypoints(points, false);
-        if (!routes.length) return null;
-        return { scored: scoreRoute(routes[0], cameras), via };
-      } catch {
-        return null;
-      }
-    });
-
-    let roundBest = best;
-    let roundVia: LatLng | null = null;
-    for (const hit of scoredBatch) {
-      if (!hit) continue;
-      candidates.push(hit.scored);
-      // Fewer cameras always wins — ignore how long the detour is.
-      if (hit.scored.cameraCount < roundBest.cameraCount) {
-        roundBest = hit.scored;
-        roundVia = hit.via;
-      }
-    }
-
-    if (roundVia && roundBest.cameraCount < best.cameraCount) {
-      committedVias = mergeViasAlongRoute(
-        committedVias,
-        roundVia,
-        roundBest.coordinates,
-      );
-      best = roundBest;
-      continue;
-    }
-
-    // No single-via improvement — try pairing vias around the two worst cams.
-    if (targets.length >= 2 && requests < MAX_DETOUR_REQUESTS) {
-      const b0 = routeBearingNear(best.coordinates, targets[0]);
-      const b1 = routeBearingNear(best.coordinates, targets[1]);
-      const pairJobs: LatLng[][] = [];
-      for (const d of [600, 1000, 1600]) {
-        pairJobs.push([
-          destinationPoint(targets[0], d, (b0 + 270) % 360),
-          destinationPoint(targets[1], d, (b1 + 90) % 360),
-        ]);
-        pairJobs.push([
-          destinationPoint(targets[0], d, (b0 + 90) % 360),
-          destinationPoint(targets[1], d, (b1 + 270) % 360),
-        ]);
-        pairJobs.push([
-          destinationPoint(targets[0], d, (b0 + 270) % 360),
-          destinationPoint(targets[1], d, (b1 + 270) % 360),
-        ]);
-      }
-
-      const pairBudget = Math.min(pairJobs.length, MAX_DETOUR_REQUESTS - requests);
-      requests += pairBudget;
-      const pairHits = await mapPool(
-        pairJobs.slice(0, pairBudget),
-        PARALLEL_OSRM,
-        async (pair) => {
-          const points = [origin, ...committedVias, ...pair, destination];
-          if (points.length > 12) return null;
-          try {
-            const routes = await fetchOsrmWaypoints(points, false);
-            if (!routes.length) return null;
-            return {
-              scored: scoreRoute(routes[0], cameras),
-              pair,
-            };
-          } catch {
-            return null;
-          }
-        },
-      );
-
-      let improved = false;
-      for (const hit of pairHits) {
-        if (!hit) continue;
-        candidates.push(hit.scored);
-        if (hit.scored.cameraCount < best.cameraCount) {
-          best = hit.scored;
-          committedVias = mergeViasAlongRoute(
-            mergeViasAlongRoute(committedVias, hit.pair[0], hit.scored.coordinates),
-            hit.pair[1],
-            hit.scored.coordinates,
-          );
-          improved = true;
-        }
-      }
-      if (improved) continue;
-    }
-
-    // Stalled — stop burning requests.
-    break;
+  if (cameras.length === 0 || best.cameraCount === 0) {
+    return {
+      fastest,
+      avoidance: best,
+      camerasOnFastest: fastest.cameraCount,
+      camerasUnavoidable: best.cameraCount,
+    };
   }
 
-  best = pickBest([best, ...candidates]);
+  const maxDuration = fastest.durationSeconds * 2.8;
+  let evals = 0;
+  const seen = new Set<string>();
+
+  const accept = (scored: ScoredRoute): boolean => {
+    if (scored.durationSeconds > maxDuration) return false;
+    const fewestSoFar = Math.min(...candidates.map((c) => c.cameraCount));
+    // Drop obvious losers: more cameras than we've already cleared, or same
+    // cameras but much slower than a known peer.
+    if (scored.cameraCount > fewestSoFar + 1) return false;
+    const peer = candidates.find((c) => c.cameraCount === scored.cameraCount);
+    if (peer && scored.durationSeconds > peer.durationSeconds * 1.45) {
+      return false;
+    }
+    candidates.push(scored);
+    if (scored.cameraCount < best.cameraCount) best = scored;
+    else if (
+      scored.cameraCount === best.cameraCount &&
+      scored.durationSeconds < best.durationSeconds
+    ) {
+      best = scored;
+    }
+    return true;
+  };
+
+  // 1) Continuous parallel bands first — closest to "take that other road".
+  const bands = rawParallelBands(origin, destination);
+  const bandHits = await mapPool(bands, PARALLEL_OSRM, async (band) => {
+    if (evals >= MAX_ROUTE_EVALS) return null;
+    evals++;
+    try {
+      const snappedPts = await mapPool(band, 3, snapToRoad);
+      const vias = snappedPts.filter((p): p is LatLng => !!p);
+      if (vias.length < 2) return null;
+      // Drop vias that snapped onto the same spot or back near cameras.
+      const clean: LatLng[] = [];
+      for (const v of vias) {
+        if (haversineMeters(v, origin) < 180) continue;
+        if (haversineMeters(v, destination) < 180) continue;
+        if (clean.some((c) => haversineMeters(c, v) < 120)) continue;
+        clean.push(v);
+      }
+      if (clean.length < 2) return null;
+      const routes = await fetchOsrmWaypoints(
+        [origin, ...clean, destination],
+        false,
+        false,
+      );
+      if (!routes.length) return null;
+      return scoreRoute(routes[0], cameras);
+    } catch {
+      return null;
+    }
+  });
+  for (const scored of bandHits) {
+    if (scored) accept(scored);
+  }
+  best = pickBest(candidates);
+
+  // 2) Corridor + camera-escape point vias, snapped to road, high clearance first.
+  const rawSeeds = [
+    ...rawCorridorSeeds(origin, destination, fastest.coordinates),
+    ...rawCameraEscapeSeeds(best.coordinates, cameras),
+  ].filter(
+    (p) =>
+      haversineMeters(p, origin) > 200 &&
+      haversineMeters(p, destination) > 200,
+  );
+
+  const snapped = await mapPool(rawSeeds, PARALLEL_OSRM, snapToRoad);
+  const viaPool: { via: LatLng; clearance: number }[] = [];
+  for (const s of snapped) {
+    if (!s) continue;
+    const key = viaKey(s);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (haversineMeters(s, origin) < 180) continue;
+    if (haversineMeters(s, destination) < 180) continue;
+    viaPool.push({ via: s, clearance: clearanceMeters(s, cameras) });
+  }
+  viaPool.sort((a, b) => b.clearance - a.clearance);
+
+  // 3) Single-via routes through clear parallel points.
+  const singleVias = viaPool.slice(0, 80).map((v) => v.via);
+  const singleHits = await mapPool(singleVias, PARALLEL_OSRM, async (via) => {
+    if (evals >= MAX_ROUTE_EVALS) return null;
+    evals++;
+    try {
+      const routes = await fetchOsrmWaypoints(
+        [origin, via, destination],
+        false,
+        false,
+      );
+      if (!routes.length) return null;
+      return { scored: scoreRoute(routes[0], cameras), via };
+    } catch {
+      return null;
+    }
+  });
+
+  const goodSingles: { scored: ScoredRoute; via: LatLng }[] = [];
+  for (const hit of singleHits) {
+    if (!hit) continue;
+    if (!accept(hit.scored)) continue;
+    goodSingles.push(hit);
+  }
+  best = pickBest(candidates);
+
+  // 4) Two-via combos (cut over, then cut back).
+  goodSingles.sort(
+    (a, b) =>
+      a.scored.cameraCount - b.scored.cameraCount ||
+      a.scored.durationSeconds - b.scored.durationSeconds,
+  );
+  const comboAnchors = [
+    ...goodSingles.slice(0, 10).map((g) => g.via),
+    ...viaPool.slice(0, 14).map((v) => v.via),
+  ];
+  const anchorKeys = new Set<string>();
+  const anchors: LatLng[] = [];
+  for (const a of comboAnchors) {
+    const k = viaKey(a);
+    if (anchorKeys.has(k)) continue;
+    anchorKeys.add(k);
+    anchors.push(a);
+  }
+
+  const pairJobs: LatLng[][] = [];
+  for (let i = 0; i < anchors.length; i++) {
+    for (let j = i + 1; j < anchors.length; j++) {
+      const di = haversineMeters(anchors[i], origin);
+      const dj = haversineMeters(anchors[j], origin);
+      pairJobs.push(
+        di <= dj ? [anchors[i], anchors[j]] : [anchors[j], anchors[i]],
+      );
+      if (pairJobs.length >= 70) break;
+    }
+    if (pairJobs.length >= 70) break;
+  }
+
+  const pairBatch = pairJobs.slice(
+    0,
+    Math.max(0, MAX_ROUTE_EVALS - evals),
+  );
+  const pairHits = await mapPool(pairBatch, PARALLEL_OSRM, async (pair) => {
+    evals++;
+    try {
+      const routes = await fetchOsrmWaypoints(
+        [origin, pair[0], pair[1], destination],
+        false,
+        false,
+      );
+      if (!routes.length) return null;
+      return scoreRoute(routes[0], cameras);
+    } catch {
+      return null;
+    }
+  });
+  for (const scored of pairHits) {
+    if (scored) accept(scored);
+  }
+
+  // 5) Escape remaining cameras on the current best avoidance path.
+  best = pickBest(candidates);
+  if (best.cameraCount > 0 && evals < MAX_ROUTE_EVALS) {
+    const escapeRaw = rawCameraEscapeSeeds(best.coordinates, cameras);
+    const escapeSnapped = await mapPool(
+      escapeRaw.slice(0, 48),
+      PARALLEL_OSRM,
+      snapToRoad,
+    );
+    const escapeVias: LatLng[] = [];
+    for (const s of escapeSnapped) {
+      if (!s) continue;
+      const k = viaKey(s);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (clearanceMeters(s, cameras) < 200) continue;
+      escapeVias.push(s);
+    }
+
+    const more = await mapPool(
+      escapeVias.slice(0, MAX_ROUTE_EVALS - evals),
+      PARALLEL_OSRM,
+      async (via) => {
+        evals++;
+        try {
+          const routes = await fetchOsrmWaypoints(
+            [origin, via, destination],
+            false,
+            false,
+          );
+          if (!routes.length) return null;
+          return scoreRoute(routes[0], cameras);
+        } catch {
+          return null;
+        }
+      },
+    );
+    for (const scored of more) {
+      if (scored) accept(scored);
+    }
+  }
+
+  best = pickBest(candidates);
 
   return {
     fastest,

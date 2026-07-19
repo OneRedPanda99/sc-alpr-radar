@@ -361,7 +361,7 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
           {searching && <div className="info">Searching addresses…</div>}
           {busy && (
             <div className="info">
-              Deep search — maximizing camera avoidance (can take a minute)…
+              Searching parallel roads for fewer cameras + faster time…
             </div>
           )}
           {error && <div className="hud-error">{error}</div>}
