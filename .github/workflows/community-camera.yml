@@ -14,11 +14,13 @@ concurrency:
 
 jobs:
   process:
-    # Only camera submissions, and only when either:
+    # Camera submissions are identified by the "[camera]" title prefix the issue
+    # form sets (labels can't be relied on — issue templates only apply a label
+    # if it already exists in the repo). Run when either:
     #  - a maintainer added the `approved` label (publish), or
     #  - the issue was opened/edited while open (validate & queue).
     if: >
-      contains(github.event.issue.labels.*.name, 'camera-submission') &&
+      startsWith(github.event.issue.title, '[camera]') &&
       (
         (github.event.action == 'labeled' && github.event.label.name == 'approved') ||
         (github.event.action != 'labeled' && github.event.issue.state == 'open')
@@ -68,11 +70,11 @@ jobs:
 
             let body;
             let close = false;
-            let addLabel = null;
+            let addLabels = [];
 
             if (status === 'valid') {
               body = `⏳ **Pending approval.** ${message}\n\nA maintainer will add the \`approved\` label to publish it for everyone.`;
-              addLabel = 'pending-approval';
+              addLabels = ['camera-submission', 'pending-approval'];
             } else if (status === 'added') {
               body = `✅ **Published.** ${message}\n\nLive for everyone within a minute.`;
               close = true;
@@ -85,10 +87,10 @@ jobs:
 
             await github.rest.issues.createComment({ owner, repo, issue_number, body });
 
-            if (addLabel) {
+            if (addLabels.length) {
               try {
-                await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [addLabel] });
-              } catch (e) { /* label may already exist on issue */ }
+                await github.rest.issues.addLabels({ owner, repo, issue_number, labels: addLabels });
+              } catch (e) { /* labels auto-create; ignore if already present */ }
             }
             if (close) {
               await github.rest.issues.update({ owner, repo, issue_number, state: 'closed' });
