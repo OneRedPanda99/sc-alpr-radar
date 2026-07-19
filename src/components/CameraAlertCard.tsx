@@ -92,9 +92,15 @@ interface DetailProps {
   camera: Camera;
   distanceMeters?: number | null;
   onClose: () => void;
+  onDelete?: (id: string) => void;
 }
 
-export function CameraDetailCard({ camera, distanceMeters, onClose }: DetailProps) {
+export function CameraDetailCard({
+  camera,
+  distanceMeters,
+  onClose,
+  onDelete,
+}: DetailProps) {
   const [imgFailed, setImgFailed] = useState(false);
   const photo = !imgFailed && (camera.imageUrl || brandImage(camera.brand));
   const title = cardTitle(camera);
@@ -144,6 +150,11 @@ export function CameraDetailCard({ camera, distanceMeters, onClose }: DetailProp
             </div>
           )}
         </div>
+        {camera.custom && onDelete && (
+          <button className="detail-delete" onClick={() => onDelete(camera.id)}>
+            Delete this camera
+          </button>
+        )}
       </div>
     </div>
   );

@@ -35,6 +35,8 @@ export interface Camera {
   imageUrl?: string;
   /** Approximate FOV half-angle in degrees (full cone = 2x). */
   fovHalfAngle: number;
+  /** True if the user added this camera manually (stored on device). */
+  custom?: boolean;
 }
 
 export interface CameraDataset {

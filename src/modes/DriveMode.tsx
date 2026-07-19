@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Camera, SavedRoute } from "@/types";
+import type { Camera, CameraKind, SavedRoute } from "@/types";
 import { MapView } from "@/components/MapView";
 import {
   AllClearBanner,
@@ -35,7 +35,7 @@ interface NearHit {
 }
 
 export function DriveMode({ activeRoute }: DriveModeProps) {
-  const { grid, dataset, status } = useCameraStore();
+  const { grid, dataset, status, addCamera, removeCamera } = useCameraStore();
   const {
     alertDistanceFeet,
     muted,
@@ -65,6 +65,7 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
   const [stepIndex, setStepIndex] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [browseCenter, setBrowseCenter] = useState<LatLng | null>(null);
+  const [addKind, setAddKind] = useState<CameraKind | null>(null);
   const { fix, error } = useGeolocation({ enabled: driving });
   useWakeLock(driving);
 
@@ -168,6 +169,36 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
     setDriving(true);
   };
 
+  const handlePlace = async (point: LatLng) => {
+    const kind = addKind ?? "alpr";
+    const id = `custom/${Date.now()}`;
+    const camera: Camera = {
+      id,
+      lat: point.lat,
+      lon: point.lon,
+      kind,
+      brand: "Other",
+      name: kind === "alpr" ? "My plate reader" : "My traffic camera",
+      operator: "Added by me",
+      directions: [],
+      omni: true,
+      purpose:
+        kind === "alpr"
+          ? "User-added plate reader"
+          : "User-added traffic camera",
+      fovHalfAngle: 40,
+      custom: true,
+    };
+    await addCamera(camera);
+    setAddKind(null);
+    setSelectedId(id);
+  };
+
+  const handleDelete = async (id: string) => {
+    await removeCamera(id);
+    setSelectedId(null);
+  };
+
   const urgency =
     !nearestAhead
       ? "cool"
@@ -190,6 +221,8 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
         basemap={basemap}
         routeLine={activeRoute?.coordinates ?? null}
         onSelectCamera={setSelectedId}
+        placing={addKind != null}
+        onMapClick={handlePlace}
       />
 
       <div className="map-controls">
@@ -216,13 +249,41 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
         >
           Traffic {counts.traffic}
         </button>
+        <button
+          className={`map-chip add ${addKind ? "on" : ""}`}
+          onClick={() => setAddKind(addKind ? null : "alpr")}
+          title="Add a camera the map is missing"
+        >
+          {addKind ? "Cancel" : "+ Add camera"}
+        </button>
       </div>
+
+      {addKind && (
+        <div className="add-banner">
+          <div className="add-banner-title">Tap the map where the camera is</div>
+          <div className="add-kind-row">
+            <button
+              className={addKind === "alpr" ? "on" : ""}
+              onClick={() => setAddKind("alpr")}
+            >
+              Plate reader
+            </button>
+            <button
+              className={addKind === "traffic" ? "on" : ""}
+              onClick={() => setAddKind("traffic")}
+            >
+              Traffic cam
+            </button>
+          </div>
+        </div>
+      )}
 
       {selectedCamera && (
         <CameraDetailCard
           camera={selectedCamera}
           distanceMeters={selectedDistance}
           onClose={() => setSelectedId(null)}
+          onDelete={handleDelete}
         />
       )}
 

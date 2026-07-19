@@ -28,6 +28,10 @@ interface MapViewProps {
   fitRoute?: boolean;
   /** Called with a camera id when a camera dot is tapped. */
   onSelectCamera?: (id: string) => void;
+  /** When true, taps on the map (not on a dot) report a location to place a camera. */
+  placing?: boolean;
+  /** Called with a tapped location while `placing` is true. */
+  onMapClick?: (point: LatLng) => void;
   onReady?: (map: maplibregl.Map) => void;
 }
 
@@ -119,6 +123,8 @@ export function MapView({
   routeLine,
   fitRoute = false,
   onSelectCamera,
+  placing = false,
+  onMapClick,
   onReady,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -129,6 +135,10 @@ export function MapView({
   const didInitialCenter = useRef(false);
   const onSelectCameraRef = useRef(onSelectCamera);
   onSelectCameraRef.current = onSelectCamera;
+  const placingRef = useRef(placing);
+  placingRef.current = placing;
+  const onMapClickRef = useRef(onMapClick);
+  onMapClickRef.current = onMapClick;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -232,9 +242,14 @@ export function MapView({
       });
 
       map.on("click", "camera-dots", (e) => {
+        if (placingRef.current) return; // in placing mode, taps drop a pin
         const f = e.features?.[0];
         const id = f?.properties?.id;
         if (id != null) onSelectCameraRef.current?.(String(id));
+      });
+      map.on("click", (e) => {
+        if (!placingRef.current) return;
+        onMapClickRef.current?.({ lat: e.lngLat.lat, lon: e.lngLat.lng });
       });
       map.on("mouseenter", "camera-dots", () => {
         map.getCanvas().style.cursor = "pointer";
@@ -273,6 +288,12 @@ export function MapView({
     if (!src) return;
     src.setData(showFov ? fovToFC(cameras) : EMPTY_FC);
   }, [cameras, showFov, ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    map.getCanvas().style.cursor = placing ? "crosshair" : "";
+  }, [placing, ready]);
 
   useEffect(() => {
     const map = mapRef.current;

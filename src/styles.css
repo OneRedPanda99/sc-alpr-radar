@@ -129,6 +129,77 @@ body {
   opacity: 1;
 }
 
+.map-chip.add {
+  border-color: rgba(47, 128, 237, 0.5);
+  color: #cfe0ff;
+}
+
+.map-chip.add.on {
+  background: var(--accent, #2f80ed);
+  color: #fff;
+  border-color: var(--accent, #2f80ed);
+}
+
+/* Add-camera hint banner */
+.add-banner {
+  position: absolute;
+  top: max(14px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  background: rgba(7, 16, 28, 0.92);
+  border: 1px solid rgba(47, 128, 237, 0.5);
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: var(--shadow);
+  text-align: center;
+  backdrop-filter: blur(8px);
+  width: min(92vw, 360px);
+}
+
+.add-banner-title {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.add-kind-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.add-kind-row button {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.add-kind-row button.on {
+  background: var(--accent, #2f80ed);
+  color: #fff;
+  border-color: var(--accent, #2f80ed);
+}
+
+.detail-delete {
+  margin-top: 12px;
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 77, 77, 0.15);
+  color: #ff6b6b;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+
 /* Segmented control (settings basemap) */
 .seg {
   display: inline-flex;

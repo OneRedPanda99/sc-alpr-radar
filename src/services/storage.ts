@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
-import type { CameraDataset, SavedRoute, Settings } from "@/types";
+import type { Camera, CameraDataset, SavedRoute, Settings } from "@/types";
 
 interface AlprDB extends DBSchema {
   meta: {
@@ -52,6 +52,17 @@ export async function loadCameras(): Promise<CameraDataset | undefined> {
 
 export async function saveCameras(dataset: CameraDataset): Promise<void> {
   await (await db()).put("meta", dataset, "cameras");
+}
+
+export async function loadCustomCameras(): Promise<Camera[]> {
+  const stored = (await (await db()).get("meta", "customCameras")) as
+    | Camera[]
+    | undefined;
+  return stored ?? [];
+}
+
+export async function saveCustomCameras(cameras: Camera[]): Promise<void> {
+  await (await db()).put("meta", cameras, "customCameras");
 }
 
 export async function loadSettings(): Promise<Settings> {
