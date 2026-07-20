@@ -3,6 +3,7 @@ import type { Camera } from "@/types";
 import { brandImage, formatFacing, KIND_LABELS } from "@/services/brand";
 import { metersToFeet } from "@/services/geo";
 import { communitySubmitUrl } from "@/services/community";
+import { Icon } from "@/components/Icon";
 
 function subtitle(camera: Camera): string {
   return camera.kind === "alpr" ? camera.brand : KIND_LABELS[camera.kind];
@@ -80,6 +81,10 @@ interface Props {
   ahead: boolean;
   muted: boolean;
   urgency: "cool" | "warm" | "hot";
+  /** Absolute bearing from driver to camera, 0–360 (0 = north). */
+  bearingToCamera?: number | null;
+  /** Driver heading, 0–360, or null if unknown. */
+  heading?: number | null;
 }
 
 export function CameraAlertCard({
@@ -88,62 +93,94 @@ export function CameraAlertCard({
   ahead,
   muted,
   urgency,
+  bearingToCamera,
+  heading,
 }: Props) {
   const [imgFailed, setImgFailed] = useState(false);
   const feet = Math.round(metersToFeet(distanceMeters));
   const photo = !imgFailed && (camera.imageUrl || brandImage(camera.brand));
   const title = cardTitle(camera);
 
+  // Dial arrow points toward the camera relative to where you're facing
+  // (up = ahead). Falls back to absolute bearing when heading is unknown.
+  const rel =
+    bearingToCamera != null
+      ? heading != null
+        ? (bearingToCamera - heading + 360) % 360
+        : bearingToCamera
+      : null;
+
   return (
     <div className={`alert-card ${urgency}`}>
-      <div className="alert-card-media">
-        {photo ? (
-          <img
-            src={photo}
-            alt={camera.brand}
-            onError={() => setImgFailed(true)}
-          />
-        ) : (
-          <div className="alert-card-fallback">{camera.brand[0]}</div>
-        )}
-      </div>
-
-      <div className="alert-card-body">
-        <div className="alert-card-top">
-          <div>
-            <div className="alert-card-title">{title}</div>
-            <div className="alert-card-brand">{subtitle(camera)}</div>
-          </div>
-          <div className="alert-card-dist">
-            {feet}
-            <span>ft</span>
-          </div>
-        </div>
-
-        <div className="alert-card-meta">
-          <div>
-            <span className="meta-label">Facing</span>
-            <span>{formatFacing(camera.directions, camera.omni)}</span>
-          </div>
-          <div>
-            <span className="meta-label">Used for</span>
-            <span>{camera.purpose}</span>
-          </div>
-          {camera.operator && camera.operator !== camera.name && (
-            <div>
-              <span className="meta-label">Operator</span>
-              <span>{camera.operator}</span>
-            </div>
+      <div className="alert-row">
+        <div className="alert-card-media">
+          {photo ? (
+            <img
+              src={photo}
+              alt={camera.brand}
+              onError={() => setImgFailed(true)}
+            />
+          ) : (
+            <div className="alert-card-fallback">{camera.brand[0]}</div>
           )}
         </div>
 
-        <div className="alert-card-foot">
-          <span className={`pill ${ahead ? "pill-ahead" : ""}`}>
-            {ahead ? "Ahead" : "Nearby"}
-          </span>
-          {muted && <span className="pill">Muted</span>}
-          {camera.zone && <span className="pill">{camera.zone}</span>}
+        <div className="alert-col">
+          <div className="alert-head">
+            <span className={`alert-dot ${urgency}`} />
+            <span className="alert-urgency">
+              {urgency === "hot"
+                ? "Approaching"
+                : urgency === "warm"
+                  ? "Nearby"
+                  : "In range"}
+            </span>
+          </div>
+          <div className="alert-card-title">{title}</div>
+          <div className="alert-card-brand">{subtitle(camera)}</div>
+          <div className="alert-card-foot">
+            <span className={`pill ${ahead ? "pill-ahead" : ""}`}>
+              {ahead ? "Ahead" : "Nearby"}
+            </span>
+            {muted && <span className="pill">Muted</span>}
+            {camera.zone && <span className="pill">{camera.zone}</span>}
+          </div>
         </div>
+
+        <div className="alert-readout">
+          <div className="alert-deg">
+            {feet}
+            <span>ft</span>
+          </div>
+          <div
+            className={`alert-bear ${ahead ? "ahead" : ""} ${
+              urgency === "warm" ? "warm" : urgency === "hot" ? "hot" : ""
+            }`}
+          >
+            {rel != null ? (
+              <Icon name="bearing" style={{ transform: `rotate(${rel}deg)` }} />
+            ) : (
+              <Icon name="bearing" />
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="alert-card-meta">
+        <div>
+          <span className="meta-label">Facing</span>
+          <span>{formatFacing(camera.directions, camera.omni)}</span>
+        </div>
+        <div>
+          <span className="meta-label">Used for</span>
+          <span>{camera.purpose}</span>
+        </div>
+        {camera.operator && camera.operator !== camera.name && (
+          <div>
+            <span className="meta-label">Operator</span>
+            <span>{camera.operator}</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -172,9 +209,7 @@ export function CameraDetailCard({
   const title = cardTitle(camera);
   const feet =
     distanceMeters != null ? Math.round(metersToFeet(distanceMeters)) : null;
-  const facingValue = camera.omni
-    ? null
-    : (camera.directions[0] ?? null);
+  const facingValue = camera.omni ? null : camera.directions[0] ?? null;
 
   return (
     <div className="detail-card">
@@ -258,6 +293,7 @@ export function CameraDetailCard({
 export function AllClearBanner() {
   return (
     <div className="alert-card clear">
+      <div className="alert-check">✓</div>
       <div className="alert-card-body">
         <div className="alert-card-title">All clear</div>
         <div className="alert-card-brand">No cameras in alert range</div>

@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#0b1220"/>
-  <g fill="none" stroke="#4895ef" stroke-width="18">
+  <rect width="512" height="512" rx="96" fill="#070b10"/>
+  <g fill="none" stroke="#16e0b8" stroke-width="18">
     <circle cx="256" cy="256" r="70"/>
     <circle cx="256" cy="256" r="130" opacity="0.7"/>
     <circle cx="256" cy="256" r="190" opacity="0.4"/>
   </g>
-  <circle cx="256" cy="256" r="26" fill="#4895ef"/>
-  <circle cx="366" cy="146" r="30" fill="#ff3b3b" stroke="#0b1220" stroke-width="10"/>
+  <circle cx="256" cy="256" r="26" fill="#16e0b8"/>
+  <circle cx="366" cy="146" r="30" fill="#ff3b3b" stroke="#070b10" stroke-width="10"/>
 </svg>

@@ -177,6 +177,12 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
   const currentStep = activeRoute?.steps?.[stepIndex] ?? null;
   const mapCenter = fix?.point ?? browseCenter;
 
+  // Bearing from driver to the nearest camera, for the HUD dial.
+  const bearingToNearest =
+    nearestAhead && fix
+      ? bearingDeg(fix.point, nearestAhead.camera)
+      : null;
+
   const handleStart = async () => {
     await unlockAudio();
     trackerRef.current.reset();
@@ -352,6 +358,8 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
             ahead={nearestAhead.ahead}
             muted={muted}
             urgency={urgency}
+            bearingToCamera={bearingToNearest}
+            heading={fix?.heading ?? null}
           />
         ) : (
           <AllClearBanner />

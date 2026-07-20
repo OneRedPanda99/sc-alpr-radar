@@ -24,8 +24,8 @@ export default defineConfig({
         short_name: "ALPR Radar",
         description:
           "South Carolina ALPR camera awareness and camera-avoidance routing (DeFlock/OSM data).",
-        theme_color: "#0b1220",
-        background_color: "#0b1220",
+        theme_color: "#070b10",
+        background_color: "#070b10",
         display: "standalone",
         orientation: "portrait",
         icons: [

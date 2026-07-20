@@ -206,7 +206,7 @@ export function MapView({
         source: ROUTE_SOURCE,
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
-          "line-color": "#2f80ed",
+          "line-color": "#16e0b8",
           "line-width": 6,
           "line-opacity": 0.95,
         },
@@ -334,7 +334,7 @@ export function MapView({
       const el = document.createElement("div");
       el.className = "user-chevron";
       el.innerHTML =
-        '<svg viewBox="0 0 24 24" width="28" height="28"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="#2f80ed" stroke="#fff" stroke-width="1.5"/></svg>';
+        '<svg viewBox="0 0 24 24" width="28" height="28"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="#16e0b8" stroke="#fff" stroke-width="1.5"/></svg>';
       userMarkerRef.current = new maplibregl.Marker({
         element: el,
         rotationAlignment: "map",
