@@ -54,10 +54,20 @@ export function SettingsMode() {
           onChange={(v) => s.set("flockOnly", v)}
         />
         <Toggle
-          label="Also beep for traffic / DOT cameras"
+          label="Beep for traffic / DOT + gunshot detectors"
           checked={s.alertTraffic}
           onChange={(v) => s.set("alertTraffic", v)}
         />
+        <Toggle
+          label="Beep for unconfirmed RF sightings"
+          checked={s.alertUnconfirmed}
+          onChange={(v) => s.set("alertUnconfirmed", v)}
+        />
+        <p className="tip" style={{ marginTop: 0 }}>
+          Everything alerts by default. Police stations and radio towers are the
+          exception — you pass too many for beeping to mean anything, so they
+          stay map-only.
+        </p>
 
         <label className="setting">
           <span>Alert sound</span>
@@ -156,6 +166,31 @@ export function SettingsMode() {
           checked={s.showTraffic}
           onChange={(v) => s.set("showTraffic", v)}
         />
+        <Toggle
+          label="Show gunshot detectors (ShotSpotter)"
+          checked={s.showGunshot}
+          onChange={(v) => s.set("showGunshot", v)}
+        />
+        <Toggle
+          label="Show police stations"
+          checked={s.showPolice}
+          onChange={(v) => s.set("showPolice", v)}
+        />
+        <Toggle
+          label="Show police radio towers (FCC)"
+          checked={s.showRadio}
+          onChange={(v) => s.set("showRadio", v)}
+        />
+        <Toggle
+          label="Show unconfirmed RF sightings"
+          checked={s.showUnconfirmed}
+          onChange={(v) => s.set("showUnconfirmed", v)}
+        />
+        <p className="tip" style={{ marginTop: 0 }}>
+          Unconfirmed sightings are cameras found by their WiFi signature but not
+          verified by eye. They never sound an alert — tap one to confirm or
+          dismiss it.
+        </p>
         <Toggle
           label="Rotate map to heading"
           checked={s.headingUp}

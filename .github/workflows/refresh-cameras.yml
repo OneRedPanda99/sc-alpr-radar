@@ -1,0 +1,92 @@
+name: Refresh camera pack
+
+# The bundled pack is the offline source of truth, and "Update → Bundled" in the
+# app just re-downloads it. Without this job the pack only changes when someone
+# happens to push, so it silently goes stale.
+on:
+  schedule:
+    # 08:10 UTC daily (~03:10 ET) — off the hour to avoid Actions' peak-minute
+    # queueing, and overnight so Overpass is less likely to rate-limit.
+    - cron: "10 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-cameras
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Rebuild pack from OSM + SCDOT 511
+        run: node scripts/fetch-sc-cameras.mjs
+
+      # Optional: needs WIGLE_API_NAME / WIGLE_API_TOKEN repo secrets. The guard
+      # is inside the shell rather than an `if:` because step-level `env` isn't
+      # readable from `if:`. Never fails the run — WiGLE free accounts have a
+      # daily query quota, and a camera refresh shouldn't die because of it.
+      - name: Refresh WiGLE candidates
+        continue-on-error: true
+        env:
+          WIGLE_API_NAME: ${{ secrets.WIGLE_API_NAME }}
+          WIGLE_API_TOKEN: ${{ secrets.WIGLE_API_TOKEN }}
+        run: |
+          if [ -z "$WIGLE_API_NAME" ] || [ -z "$WIGLE_API_TOKEN" ]; then
+            echo "WiGLE secrets not set — skipping candidate refresh."
+            exit 0
+          fi
+          node scripts/fetch-wigle-cameras.mjs
+
+      # Overpass occasionally answers with a partial extract. Committing that
+      # would wipe real cameras out of everyone's offline pack, so refuse any
+      # rebuild that loses more than 10% of the points we already had.
+      - name: Sanity-check the new pack
+        id: check
+        run: |
+          git show HEAD:public/data/sc-cameras.geojson > /tmp/before.geojson
+          count() { node -p "JSON.parse(require('fs').readFileSync('$1','utf8')).features.length"; }
+          before=$(count /tmp/before.geojson)
+          after=$(count public/data/sc-cameras.geojson)
+          echo "before=$before after=$after"
+          if [ "$after" -lt $(( before * 90 / 100 )) ]; then
+            echo "::error::Refusing to commit: pack shrank from $before to $after points."
+            exit 1
+          fi
+          echo "summary=$before → $after points" >> "$GITHUB_OUTPUT"
+
+      - name: Commit if changed
+        id: commit
+        run: |
+          paths="public/data/sc-cameras.geojson public/data/sc-wigle-candidates.geojson"
+          if git diff --quiet -- $paths; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No camera changes today."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add $paths
+          git commit -m "Refresh camera pack (${{ steps.check.outputs.summary }})"
+          git push
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      # GITHUB_TOKEN pushes don't trigger other workflows, so kick Pages manually.
+      - name: Redeploy site
+        if: steps.commit.outputs.changed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'deploy.yml',
+              ref: 'main',
+            });

@@ -276,6 +276,17 @@ body {
   border-top: 1px solid var(--border);
 }
 
+.detail-unconfirmed {
+  margin: 12px 0 0;
+  padding: 9px 11px;
+  border-radius: var(--radius-xs);
+  border: 1px dashed var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .detail-actions {
   display: flex;
   gap: 8px;

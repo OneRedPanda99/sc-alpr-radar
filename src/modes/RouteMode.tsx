@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Camera, LatLng, SavedRoute } from "@/types";
+import { PASSIVE_KINDS } from "@/types";
 import { MapView } from "@/components/MapView";
+import { makeIsShown } from "@/services/layers";
 import { useCameraStore } from "@/store/cameraStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import {
@@ -31,6 +33,8 @@ function shouldAvoidCamera(
     avoidCommunity: boolean;
   },
 ): boolean {
+  // Police stations aren't something a route detours around.
+  if (PASSIVE_KINDS.has(c.kind)) return false;
   if (c.custom) return s.avoidCustom;
   if (c.id.startsWith("community/")) return s.avoidCommunity;
   if (c.kind === "alpr" || c.kind === "speed") {
@@ -46,6 +50,10 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
   const showFov = useSettingsStore((s) => s.showFov);
   const showAlpr = useSettingsStore((s) => s.showAlpr);
   const showTraffic = useSettingsStore((s) => s.showTraffic);
+  const showGunshot = useSettingsStore((s) => s.showGunshot);
+  const showPolice = useSettingsStore((s) => s.showPolice);
+  const showRadio = useSettingsStore((s) => s.showRadio);
+  const showUnconfirmed = useSettingsStore((s) => s.showUnconfirmed);
   const flockOnly = useSettingsStore((s) => s.flockOnly);
   const basemap = useSettingsStore((s) => s.basemap);
   const avoidFlock = useSettingsStore((s) => s.avoidFlock);
@@ -58,12 +66,26 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
 
   const mapCameras = useMemo(() => {
     if (!dataset) return [];
-    return dataset.cameras.filter(
-      (c) =>
-        (c.kind === "alpr" ? showAlpr : showTraffic) &&
-        (!flockOnly || c.brand === "Flock Safety" || c.custom),
-    );
-  }, [dataset, showAlpr, showTraffic, flockOnly]);
+    const isShown = makeIsShown({
+      showAlpr,
+      showTraffic,
+      showGunshot,
+      showPolice,
+      showRadio,
+      showUnconfirmed,
+      flockOnly,
+    });
+    return dataset.cameras.filter(isShown);
+  }, [
+    dataset,
+    showAlpr,
+    showTraffic,
+    showGunshot,
+    showPolice,
+    showRadio,
+    showUnconfirmed,
+    flockOnly,
+  ]);
 
   const routeCameras = useMemo(() => {
     if (!dataset) return [];

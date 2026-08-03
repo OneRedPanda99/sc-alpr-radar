@@ -6,8 +6,25 @@ export type Brand =
   | "Neology"
   | "Other";
 
-/** Broad category of camera, used for coloring, filtering and alerts. */
-export type CameraKind = "alpr" | "speed" | "traffic";
+/**
+ * Broad category of a mapped surveillance point, used for coloring, filtering
+ * and alerts. Not everything here is a camera — `gunshot` is an acoustic sensor
+ * and `police` is a station — but they share the same pipeline (grid, map
+ * layers, proximity card) so they share the same shape.
+ */
+export type CameraKind =
+  | "alpr"
+  | "speed"
+  | "traffic"
+  | "gunshot"
+  | "police"
+  | "radio";
+
+/** Kinds that are never alerted on or routed around (reference points only). */
+export const PASSIVE_KINDS: ReadonlySet<CameraKind> = new Set<CameraKind>([
+  "police",
+  "radio",
+]);
 
 export interface Camera {
   /** OSM node id (stable across syncs). */
@@ -37,6 +54,17 @@ export interface Camera {
   fovHalfAngle: number;
   /** True if the user added this camera manually (stored on device). */
   custom?: boolean;
+  /**
+   * Derived from an RF signature (e.g. a WiGLE WiFi observation) rather than a
+   * human-verified mapping. Strong evidence, but not proof — a business with a
+   * matching network name looks the same from a passing car. These render
+   * differently and never alert until you confirm one by eye.
+   */
+  unconfirmed?: boolean;
+  /** Where an unconfirmed sighting came from, shown on the detail card. */
+  evidence?: string;
+  /** Radio frequencies in MHz, for `radio` transmitter sites. */
+  frequencies?: number[];
 }
 
 export interface CameraDataset {
@@ -44,6 +72,12 @@ export interface CameraDataset {
   syncedAt?: string;
   count: number;
   cameras: Camera[];
+  /**
+   * Bumped whenever the pack gains fields or kinds. A cached pack with an older
+   * version is rebuilt from the bundle on launch, so shipping new sources
+   * actually reaches people who already have the app installed.
+   */
+  schemaVersion?: number;
 }
 
 export interface LatLng {
@@ -100,8 +134,18 @@ export interface Settings {
   showAlpr: boolean;
   /** Show/hide traffic + speed cameras. */
   showTraffic: boolean;
-  /** Also play alert sound for traffic/CCTV cameras (off = visual only). */
+  /** Show/hide gunshot detectors (ShotSpotter / SoundThinking). */
+  showGunshot: boolean;
+  /** Show/hide police stations. */
+  showPolice: boolean;
+  /** Show/hide licensed police/public-safety radio transmitter sites. */
+  showRadio: boolean;
+  /** Show/hide unconfirmed RF-derived camera sightings. */
+  showUnconfirmed: boolean;
+  /** Also play alert sound for traffic/CCTV + gunshot detectors. */
   alertTraffic: boolean;
+  /** Also play alert sound for unconfirmed RF sightings. */
+  alertUnconfirmed: boolean;
   /** Basemap style key. */
   basemap: "streets" | "satellite";
   /** Route avoidance: Flock Safety plate readers. */

@@ -247,6 +247,25 @@ export function CameraDetailCard({
               <span>{camera.zone}</span>
             </div>
           )}
+          {camera.frequencies && camera.frequencies.length > 0 && (
+            <div>
+              <span className="meta-label">Frequencies</span>
+              <span>
+                {camera.frequencies
+                  .slice(0, 8)
+                  .map((f) => `${f.toFixed(4).replace(/0+$/, "").replace(/\.$/, "")} MHz`)
+                  .join(" · ")}
+                {camera.frequencies.length > 8 &&
+                  ` +${camera.frequencies.length - 8} more`}
+              </span>
+            </div>
+          )}
+          {camera.evidence && (
+            <div>
+              <span className="meta-label">Evidence</span>
+              <span>{camera.evidence}</span>
+            </div>
+          )}
           {feet != null && (
             <div>
               <span className="meta-label">Distance</span>
@@ -254,6 +273,12 @@ export function CameraDetailCard({
             </div>
           )}
         </div>
+        {camera.unconfirmed && (
+          <p className="detail-unconfirmed">
+            Unconfirmed sighting — inferred from a radio signature, not verified
+            by eye. It won't sound an alert. Check it on your next pass.
+          </p>
+        )}
         {camera.custom && onUpdateFacing && (
           <FacingPicker
             value={facingValue}

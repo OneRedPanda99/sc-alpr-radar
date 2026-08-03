@@ -61,6 +61,7 @@ function camerasToFC(
         id: c.id,
         color: cameraColor(c),
         highlight: highlightIds?.has(c.id) ?? false,
+        unconfirmed: c.unconfirmed ?? false,
       },
     })),
   };
@@ -224,18 +225,30 @@ export function MapView({
             10,
             5.5,
           ],
+          // Unconfirmed RF sightings render hollow — a ring in the brand colour
+          // with a near-transparent centre — so they read as "maybe" at a
+          // glance and can never be mistaken for a verified camera.
           "circle-color": ["get", "color"],
           "circle-stroke-width": [
             "case",
             ["boolean", ["get", "highlight"], false],
             3,
+            ["boolean", ["get", "unconfirmed"], false],
+            2,
             1.5,
           ],
-          "circle-stroke-color": "#ffffff",
+          "circle-stroke-color": [
+            "case",
+            ["boolean", ["get", "unconfirmed"], false],
+            ["get", "color"],
+            "#ffffff",
+          ],
           "circle-opacity": [
             "case",
             ["boolean", ["get", "highlight"], false],
             1,
+            ["boolean", ["get", "unconfirmed"], false],
+            0.18,
             0.85,
           ],
         },

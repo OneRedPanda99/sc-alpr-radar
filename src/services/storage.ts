@@ -43,7 +43,15 @@ export const DEFAULT_SETTINGS: Settings = {
   alertSound: "chirp",
   showAlpr: true,
   showTraffic: true,
-  alertTraffic: false,
+  showGunshot: true,
+  showPolice: true,
+  showRadio: false,
+  showUnconfirmed: true,
+  // Alert on everything detectable by default; each kind can be turned off
+  // individually. Police stations and radio towers are the exception — see
+  // PASSIVE_KINDS.
+  alertTraffic: true,
+  alertUnconfirmed: true,
   basemap: "streets",
   avoidFlock: true,
   avoidOtherAlpr: true,
@@ -82,6 +90,17 @@ export async function saveCommunityCache(cameras: Camera[]): Promise<void> {
   await (await db()).put("meta", cameras, "communityCameras");
 }
 
+export async function loadRadioCache(): Promise<Camera[]> {
+  const stored = (await (await db()).get("meta", "radioSites")) as
+    | Camera[]
+    | undefined;
+  return stored ?? [];
+}
+
+export async function saveRadioCache(cameras: Camera[]): Promise<void> {
+  await (await db()).put("meta", cameras, "radioSites");
+}
+
 const ALERT_SOUND_IDS = new Set([
   "chirp",
   "pulse",
@@ -92,11 +111,26 @@ const ALERT_SOUND_IDS = new Set([
   "digital",
 ]);
 
+/**
+ * Bumped when a default changes in a way that should reach people who already
+ * have settings saved. Plain `{...DEFAULTS, ...stored}` can't do that — a
+ * stored `false` is indistinguishable from a deliberate one — so each migration
+ * below resets only the specific keys it owns.
+ */
+const SETTINGS_VERSION = 2;
+
 export async function loadSettings(): Promise<Settings> {
   const stored = (await (await db()).get("meta", "settings")) as
-    | Partial<Settings>
+    | (Partial<Settings> & { settingsVersion?: number })
     | undefined;
   const merged = { ...DEFAULT_SETTINGS, ...(stored ?? {}) };
+
+  // v2: alerts changed from "cameras only" to "everything detectable".
+  if (stored && (stored.settingsVersion ?? 1) < 2) {
+    merged.alertTraffic = DEFAULT_SETTINGS.alertTraffic;
+    merged.alertUnconfirmed = DEFAULT_SETTINGS.alertUnconfirmed;
+  }
+
   if (!ALERT_SOUND_IDS.has(merged.alertSound)) {
     merged.alertSound = DEFAULT_SETTINGS.alertSound;
   }
@@ -104,7 +138,11 @@ export async function loadSettings(): Promise<Settings> {
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
-  await (await db()).put("meta", settings, "settings");
+  await (await db()).put(
+    "meta",
+    { ...settings, settingsVersion: SETTINGS_VERSION },
+    "settings",
+  );
 }
 
 export async function listRoutes(): Promise<SavedRoute[]> {

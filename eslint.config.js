@@ -19,6 +19,8 @@ const nodeGlobals = {
   fetch: "readonly",
   setTimeout: "readonly",
   URL: "readonly",
+  URLSearchParams: "readonly",
+  Buffer: "readonly",
 };
 
 export default tseslint.config(

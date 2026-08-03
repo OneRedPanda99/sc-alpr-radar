@@ -30,12 +30,18 @@ export const KIND_COLORS: Record<CameraKind, string> = {
   alpr: "#ff4d4d",
   speed: "#f2c14e",
   traffic: "#4895ef",
+  gunshot: "#c77dff",
+  police: "#38b000",
+  radio: "#00b4d8",
 };
 
 export const KIND_LABELS: Record<CameraKind, string> = {
   alpr: "Plate reader (ALPR)",
   speed: "Speed camera",
   traffic: "Traffic camera",
+  gunshot: "Gunshot detector",
+  police: "Police station",
+  radio: "Police radio transmitter",
 };
 
 /** Map dot / cone color: ALPR uses brand color, others use category color. */
@@ -96,6 +102,17 @@ export function derivePurpose(
   }
   if (kind === "traffic") {
     return "Traffic monitoring / CCTV camera";
+  }
+  if (kind === "gunshot") {
+    return "Acoustic gunshot detector (ShotSpotter / SoundThinking)";
+  }
+  if (kind === "police") {
+    return operator ? `Police station — ${operator}` : "Police station";
+  }
+  if (kind === "radio") {
+    return operator
+      ? `Licensed radio transmitter — ${operator}`
+      : "Licensed public-safety radio transmitter";
   }
 
   if (z.includes("traffic") || desc.includes("traffic")) {

@@ -35,18 +35,48 @@ Public OSRM / Photon have fair-use rate limits — fine for personal use.
 
 ## Camera sources & coverage
 
-The offline pack (`public/data/sc-cameras.geojson`) merges three feeds:
+The offline pack (`public/data/sc-cameras.geojson`) merges OSM and SCDOT into
+~2,900 points:
 
-- **~1,600 ALPR / plate readers** — from OpenStreetMap / DeFlock (`surveillance:type=ALPR`).
-- **~760 SCDOT traffic cameras** — the state's live 511 network (all of SC's
+- **~1,760 ALPR / plate readers** — from OpenStreetMap / DeFlock (`surveillance:type=ALPR`).
+- **~770 SCDOT traffic cameras** — the state's live 511 network (all of SC's
   public traffic cams are SCDOT's, including the Columbia area). Includes road
   name, travel-direction cones, and a live snapshot image.
 - **~120 city / county / police CCTV + speed cameras** — every other mapped
   `man_made=surveillance` node in OSM.
+- **~260 police stations** — `amenity=police` (nodes and building ways).
+- **~16 gunshot detectors** — ShotSpotter / SoundThinking acoustic sensors.
 
-Cameras are color-coded: ALPR by brand (Flock red, etc.), traffic blue, speed
-amber. Traffic cameras are **visual-only by default** — they don't beep unless
-you enable it in Settings.
+Points are color-coded: ALPR by brand (Flock red, etc.), traffic blue, speed
+amber, gunshot detectors purple, police stations green. Traffic cameras and
+gunshot detectors are **visual-only by default** — they don't beep unless you
+enable it in Settings. Police stations never beep and are never routed around;
+they're reference points only.
+
+The pack rebuilds itself nightly (`.github/workflows/refresh-cameras.yml`) and
+refuses to commit a rebuild that loses more than 10% of its points, so a partial
+Overpass response can't wipe out your offline data.
+
+Two further layers ship as their own files, because they refresh on completely
+different cadences:
+
+- **~1,600 public-safety radio transmitter sites** (`sc-radio-sites.geojson`) —
+  every active FCC licence in SC's Public Safety Pool, with licensee and
+  frequencies. Off by default; enable under Settings → Map. Note the pool covers
+  fire, EMS, DOT and forestry as well as police, so each pin is labelled with its
+  actual licensee rather than being implied to be a cop.
+- **Unconfirmed RF sightings** (`sc-wigle-candidates.geojson`) — likely cameras
+  found by their WiFi signature in [WiGLE](https://wigle.net), for units nobody
+  has mapped in OSM. Rendered hollow, and they **never sound an alert** until you
+  confirm one by eye.
+
+### Why the WiGLE patterns are so narrow
+
+A naive `%flock%` search is almost all noise — restaurants, home networks, sports
+puns. Validating against known OSM ALPR positions showed the *exact* SSID `Flock`
+lands within 200 m of a mapped ALPR 38% of the time, against a 2.1% control rate
+for random nearby points — roughly an 18x enrichment. Broader patterns did not
+survive that test. Re-run the validation before adding a signature.
 
 ## Features
 
@@ -116,10 +146,23 @@ npm run preview -- --host
 
 - `npm run fetch:cameras` regenerates `public/data/sc-cameras.geojson`
   (OSM via Overpass + SCDOT 511) and prints counts by kind/brand.
+- `npm run fetch:wigle` regenerates the unconfirmed WiGLE candidates. Needs
+  `WIGLE_API_NAME` / `WIGLE_API_TOKEN` (put them in `.env`, which is gitignored,
+  or set them as repo secrets for the nightly job). Free WiGLE accounts have a
+  daily query quota, so this queries one validated signature, once.
+- `npm run fetch:radio` regenerates the FCC transmitter layer. Downloads a
+  ~420 MB national archive, so it is deliberately **not** part of the nightly
+  job — licensed towers don't move. Re-run it every month or two. Pass
+  `ULS_DIR=/path/to/extracted` to reuse an existing extract.
 - In-app: **Settings → Update cameras** (bundled pack or live Overpass); this
   also refreshes the community dataset.
 
-To add/fix an ALPR for everyone, use the [DeFlock app](https://deflock.me); it
+A live update pulls the same query the build script uses, then re-attaches the
+SCDOT 511 cameras from the bundled pack — SCDOT serves no CORS header, so the
+browser can never fetch it directly and a live update would otherwise drop ~770
+cameras.
+
+To add/fix an ALPR for everyone, use the [DeFlock app](https://deflock.org); it
 flows into the pack on the next update.
 
 ## Project layout

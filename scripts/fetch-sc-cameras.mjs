@@ -19,24 +19,29 @@ const ENDPOINTS = [
 const USER_AGENT = "sc-alpr-radar/0.2 (personal DeFlock data pack; +https://deflock.me)";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Grab EVERY mapped surveillance node (all ALPRs are man_made=surveillance) plus
-// speed cameras, then classify locally. This picks up city/county/police CCTV
-// cameras that aren't tagged with surveillance:zone=traffic.
+// Grab EVERY mapped surveillance node (all ALPRs are man_made=surveillance)
+// plus speed cameras and police stations, then classify locally. This picks up
+// city/county/police CCTV cameras that aren't tagged surveillance:zone=traffic.
+// Must stay in sync with OVERPASS_QUERY in src/services/sync.ts.
 const QUERY = `[out:json][timeout:180];
 area["name"="South Carolina"]["admin_level"="4"]->.sc;
 (
   node["man_made"="surveillance"](area.sc);
   node["highway"="speed_camera"](area.sc);
+  node["amenity"="police"](area.sc);
+  way["amenity"="police"](area.sc);
 );
-out body;`;
+out center;`;
 
-// Returns the camera kind, or null for non-camera surveillance we skip
-// (e.g. ShotSpotter gunshot detectors, security guards).
+// Returns the point's kind, or null for things we don't map
+// (e.g. surveillance:type=guard, which is a person rather than a device).
 function classifyKind(tags) {
   const type = tags["surveillance:type"];
+  if (tags["amenity"] === "police") return "police";
   if (type === "ALPR") return "alpr";
+  if (type === "gunshot_detector") return "gunshot";
   if (tags["highway"] === "speed_camera") return "speed";
-  if (type === "gunshot_detector" || type === "guard") return null;
+  if (type === "guard") return null;
   return "traffic";
 }
 
@@ -142,6 +147,12 @@ function derivePurpose(brand, zone, operator, description, kind = "alpr") {
   const desc = (description ?? "").toLowerCase();
   if (kind === "speed") return "Speed enforcement camera";
   if (kind === "traffic") return "Traffic monitoring / CCTV camera";
+  if (kind === "gunshot") {
+    return "Acoustic gunshot detector (ShotSpotter / SoundThinking)";
+  }
+  if (kind === "police") {
+    return operator ? `Police station — ${operator}` : "Police station";
+  }
   if (z.includes("traffic") || desc.includes("traffic")) {
     return "Traffic ALPR — scans plates of passing vehicles";
   }
@@ -208,7 +219,11 @@ async function main() {
   const elements = json.elements ?? [];
   const features = [];
   for (const el of elements) {
-    if (el.lat == null || el.lon == null) continue;
+    // Police stations are often mapped as building ways; `out center` gives
+    // those a centroid instead of lat/lon.
+    const lat = el.lat ?? el.center?.lat;
+    const lon = el.lon ?? el.center?.lon;
+    if (lat == null || lon == null) continue;
     const tags = el.tags ?? {};
     const kind = classifyKind(tags);
     if (kind == null) continue;
@@ -224,9 +239,9 @@ async function main() {
 
     features.push({
       type: "Feature",
-      geometry: { type: "Point", coordinates: [el.lon, el.lat] },
+      geometry: { type: "Point", coordinates: [lon, lat] },
       properties: {
-        id: `node/${el.id}`,
+        id: `${el.type}/${el.id}`,
         kind,
         brand,
         rawBrand: rawBrand ?? null,

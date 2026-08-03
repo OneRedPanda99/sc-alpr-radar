@@ -6,21 +6,31 @@ import {
   resolveImageUrl,
 } from "@/services/brand";
 
-/** Classify an OSM node into a broad camera category. */
-export function classifyKind(tags: Record<string, string>): CameraKind {
+/**
+ * Classify an OSM node into a broad category, or null for nodes we don't map
+ * (e.g. `surveillance:type=guard`, which is a person, not a device).
+ */
+export function classifyKind(tags: Record<string, string>): CameraKind | null {
+  if (tags["amenity"] === "police") return "police";
   if (tags["surveillance:type"] === "ALPR") return "alpr";
+  if (tags["surveillance:type"] === "gunshot_detector") return "gunshot";
   if (tags["highway"] === "speed_camera") return "speed";
+  if (tags["surveillance:type"] === "guard") return null;
   return "traffic";
 }
 
-/** Shared parsing for Overpass elements and bundled GeoJSON properties. */
+/**
+ * Shared parsing for Overpass elements and bundled GeoJSON properties.
+ * Returns null for nodes we deliberately skip (see `classifyKind`).
+ */
 export function cameraFromTags(
   id: string,
   lat: number,
   lon: number,
   tags: Record<string, string>,
-): Camera {
+): Camera | null {
   const kind = classifyKind(tags);
+  if (kind == null) return null;
   const rawBrand =
     tags["manufacturer"] ?? tags["brand"] ?? tags["operator"] ?? tags["name"];
   const brand: Brand = normalizeBrand(rawBrand);

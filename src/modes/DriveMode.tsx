@@ -24,6 +24,7 @@ import {
   haversineMeters,
 } from "@/services/geo";
 import { formatDistance, formatDuration } from "@/services/routing";
+import { makeIsAlertable, makeIsShown } from "@/services/layers";
 
 interface DriveModeProps {
   activeRoute: SavedRoute | null;
@@ -47,21 +48,62 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
     showFov,
     showAlpr,
     showTraffic,
+    showGunshot,
+    showPolice,
+    showRadio,
+    showUnconfirmed,
     alertTraffic,
+    alertUnconfirmed,
     alertSound,
     basemap,
     set: setSetting,
   } = useSettingsStore();
 
   const isShown = useMemo(
-    () => (c: Camera) =>
-      (c.kind === "alpr" ? showAlpr : showTraffic) &&
-      (!flockOnly || c.brand === "Flock Safety" || !!c.custom),
-    [showAlpr, showTraffic, flockOnly],
+    () =>
+      makeIsShown({
+        showAlpr,
+        showTraffic,
+        showGunshot,
+        showPolice,
+        showRadio,
+        showUnconfirmed,
+        flockOnly,
+      }),
+    [
+      showAlpr,
+      showTraffic,
+      showGunshot,
+      showPolice,
+      showRadio,
+      showUnconfirmed,
+      flockOnly,
+    ],
   );
   const isAlertable = useMemo(
-    () => (c: Camera) => isShown(c) && (c.kind !== "traffic" || alertTraffic),
-    [isShown, alertTraffic],
+    () =>
+      makeIsAlertable({
+        showAlpr,
+        showTraffic,
+        showGunshot,
+        showPolice,
+        showRadio,
+        showUnconfirmed,
+        flockOnly,
+        alertTraffic,
+        alertUnconfirmed,
+      }),
+    [
+      showAlpr,
+      showTraffic,
+      showGunshot,
+      showPolice,
+      showRadio,
+      showUnconfirmed,
+      flockOnly,
+      alertTraffic,
+      alertUnconfirmed,
+    ],
   );
 
   const [driving, setDriving] = useState(false);
@@ -155,12 +197,17 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
     return dataset.cameras.filter(isShown);
   }, [dataset, isShown]);
 
+  // Each count must match exactly what its chip toggles. Lumping every
+  // non-ALPR kind into "traffic" would now include radio towers and police
+  // stations, so the chip would claim thousands of cameras that aren't there.
   const counts = useMemo(() => {
     const c = { alpr: 0, traffic: 0 };
     if (dataset)
-      for (const cam of dataset.cameras)
+      for (const cam of dataset.cameras) {
+        if (cam.unconfirmed) continue;
         if (cam.kind === "alpr") c.alpr++;
-        else c.traffic++;
+        else if (cam.kind === "speed" || cam.kind === "traffic") c.traffic++;
+      }
     return c;
   }, [dataset]);
 

@@ -47,7 +47,13 @@ export default defineConfig({
         // Camera data + basemap tiles: cache-first so drives work offline.
         runtimeCaching: [
           {
-            urlPattern: ({ url }) => url.pathname.endsWith("sc-cameras.geojson"),
+            // Every data layer, not just the camera pack — radio sites and
+            // WiGLE candidates must survive offline too, or they silently
+            // disappear the moment you lose signal.
+            urlPattern: ({ url }) =>
+              url.pathname.includes("/data/") &&
+              (url.pathname.endsWith(".geojson") ||
+                url.pathname.endsWith(".json")),
             handler: "StaleWhileRevalidate",
             options: {
               cacheName: "alpr-data",

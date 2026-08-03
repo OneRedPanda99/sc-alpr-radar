@@ -6,12 +6,15 @@ import {
   loadCameras,
   loadCommunityCache,
   loadCustomCameras,
+  loadRadioCache,
   saveCameras,
   saveCommunityCache,
   saveCustomCameras,
+  saveRadioCache,
 } from "@/services/storage";
 import { fetchCommunityCameras } from "@/services/community";
-import { updateCameras } from "@/services/sync";
+import { fetchRadioSites, fetchWigleCandidates } from "@/services/extraLayers";
+import { PACK_SCHEMA_VERSION, updateCameras } from "@/services/sync";
 
 type Status = "idle" | "loading" | "ready" | "empty" | "error";
 
@@ -22,7 +25,12 @@ interface CameraState {
   community: Camera[];
   /** User-added cameras, persisted on device and merged into the map. */
   custom: Camera[];
-  /** Combined view (pack + community + custom) used by map, grid and alerts. */
+  /**
+   * Layers shipped as their own files: FCC radio sites and unconfirmed WiGLE
+   * candidates. Grouped because they load and cache identically.
+   */
+  extra: Camera[];
+  /** Combined view (pack + community + custom + extra) used by map and alerts. */
   dataset: CameraDataset | null;
   grid: CameraGrid | null;
   status: Status;
@@ -39,6 +47,7 @@ function combine(
   pack: CameraDataset | null,
   community: Camera[],
   custom: Camera[],
+  extra: Camera[] = [],
 ): CameraDataset {
   // Drop local customs that already exist in the shared dataset (e.g. after the
   // user shared one and it was accepted) so they don't appear twice.
@@ -46,7 +55,12 @@ function combine(
     `${c.kind}@${c.lat.toFixed(4)},${c.lon.toFixed(4)}`;
   const shared = new Set(community.map(key));
   const localOnly = custom.filter((c) => !shared.has(key(c)));
-  const cameras = [...(pack?.cameras ?? []), ...community, ...localOnly];
+  const cameras = [
+    ...(pack?.cameras ?? []),
+    ...community,
+    ...localOnly,
+    ...extra,
+  ];
   return {
     generatedAt: pack?.generatedAt ?? new Date().toISOString(),
     syncedAt: pack?.syncedAt,
@@ -67,6 +81,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
   pack: null,
   community: [],
   custom: [],
+  extra: [],
   dataset: null,
   grid: null,
   status: "idle",
@@ -82,8 +97,11 @@ export const useCameraStore = create<CameraState>((set, get) => ({
         pack = await updateCameras("bundled");
       } else {
         pack = normalizeDataset(pack);
-        // If the pack predates purpose or camera-kind metadata, prefer the newer bundle.
-        const needsUpgrade = pack.cameras.some((c) => !c.purpose || !c.kind);
+        // Rebuild from the bundle when the cached pack predates the current
+        // schema (new kinds/fields) or is missing derived metadata entirely.
+        const needsUpgrade =
+          (pack.schemaVersion ?? 1) < PACK_SCHEMA_VERSION ||
+          pack.cameras.some((c) => !c.purpose || !c.kind);
         if (needsUpgrade) {
           pack = await updateCameras("bundled");
         } else {
@@ -92,16 +110,42 @@ export const useCameraStore = create<CameraState>((set, get) => ({
       }
       const custom = await loadCustomCameras();
       const community = await loadCommunityCache();
-      const dataset = combine(pack, community, custom);
+      const extra = await loadRadioCache();
+      const dataset = combine(pack, community, custom, extra);
       set({
         pack,
         community,
         custom,
+        extra,
         dataset,
         grid: new CameraGrid(dataset.cameras),
         status: dataset.count > 0 ? "ready" : "empty",
         error: null,
       });
+
+      // Radio sites are a large, rarely-changing file — fetch both extra layers
+      // off the critical path so the map is usable immediately on a slow
+      // hotspot, and keep the cached copy if either fetch fails offline.
+      void Promise.all([fetchRadioSites(), fetchWigleCandidates()]).then(
+        ([sites, candidates]) => {
+          if (sites == null && candidates == null) return;
+          const fresh = [...(sites ?? []), ...(candidates ?? [])];
+          if (fresh.length === 0) return;
+          void saveRadioCache(fresh);
+          const next = combine(
+            get().pack,
+            get().community,
+            get().custom,
+            fresh,
+          );
+          set({
+            extra: fresh,
+            dataset: next,
+            grid: new CameraGrid(next.cameras),
+            status: next.count > 0 ? "ready" : "empty",
+          });
+        },
+      );
 
       // Refresh the shared community dataset in the background (non-blocking).
       // Prefer tip-of-main sources so newly approved cameras appear without a
@@ -109,7 +153,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
       void fetchCommunityCameras().then((fresh) => {
         if (fresh == null) return;
         void saveCommunityCache(fresh);
-        const next = combine(get().pack, fresh, get().custom);
+        const next = combine(get().pack, fresh, get().custom, get().extra);
         set({
           community: fresh,
           dataset: next,
@@ -128,7 +172,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
       const pack = await updateCameras(source);
       const community = (await fetchCommunityCameras()) ?? get().community;
       void saveCommunityCache(community);
-      const dataset = combine(pack, community, get().custom);
+      const dataset = combine(pack, community, get().custom, get().extra);
       set({
         pack,
         community,
@@ -145,7 +189,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
   addCamera: async (camera) => {
     const custom = [...get().custom, camera];
     await saveCustomCameras(custom);
-    const dataset = combine(get().pack, get().community, custom);
+    const dataset = combine(get().pack, get().community, custom, get().extra);
     set({
       custom,
       dataset,
@@ -159,7 +203,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
       c.id === id ? { ...c, ...patch, id: c.id, custom: true } : c,
     );
     await saveCustomCameras(custom);
-    const dataset = combine(get().pack, get().community, custom);
+    const dataset = combine(get().pack, get().community, custom, get().extra);
     set({
       custom,
       dataset,
@@ -170,7 +214,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
   removeCamera: async (id) => {
     const custom = get().custom.filter((c) => c.id !== id);
     await saveCustomCameras(custom);
-    const dataset = combine(get().pack, get().community, custom);
+    const dataset = combine(get().pack, get().community, custom, get().extra);
     set({
       custom,
       dataset,
