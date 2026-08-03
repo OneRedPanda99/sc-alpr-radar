@@ -33,6 +33,7 @@ export const KIND_COLORS: Record<CameraKind, string> = {
   gunshot: "#c77dff",
   police: "#38b000",
   radio: "#00b4d8",
+  incident: "#ff6b35",
 };
 
 export const KIND_LABELS: Record<CameraKind, string> = {
@@ -42,6 +43,7 @@ export const KIND_LABELS: Record<CameraKind, string> = {
   gunshot: "Gunshot detector",
   police: "Police station",
   radio: "Police radio transmitter",
+  incident: "Live road incident",
 };
 
 /** Map dot / cone color: ALPR uses brand color, others use category color. */
@@ -113,6 +115,9 @@ export function derivePurpose(
     return operator
       ? `Licensed radio transmitter — ${operator}`
       : "Licensed public-safety radio transmitter";
+  }
+  if (kind === "incident") {
+    return "Live road incident — responders likely on scene";
   }
 
   if (z.includes("traffic") || desc.includes("traffic")) {

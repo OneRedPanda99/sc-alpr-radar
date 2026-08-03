@@ -276,7 +276,8 @@ export function CameraDetailCard({
         {camera.unconfirmed && (
           <p className="detail-unconfirmed">
             Unconfirmed sighting — inferred from a radio signature, not verified
-            by eye. It won't sound an alert. Check it on your next pass.
+            by eye. Check it on your next pass; you can silence these under
+            Settings → Alerts.
           </p>
         )}
         {camera.custom && onUpdateFacing && (

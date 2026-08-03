@@ -1,0 +1,52 @@
+name: Refresh live incidents
+
+# SCDOT's 511 CDN and the Waze feed it republishes send no CORS header, so the
+# browser can never poll them directly. This job polls, commits the result, and
+# the app reads it from the tip of main — no Pages redeploy, no backend.
+on:
+  schedule:
+    # Every 10 minutes. GitHub queues scheduled runs under load, so treat this
+    # as "roughly every 10-15 minutes" rather than a guarantee.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-incidents
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Fetch SCDOT 511 + Waze incidents
+        run: node scripts/fetch-live-incidents.mjs
+
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- public/data/live-incidents.json; then
+            echo "No incident changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data/live-incidents.json
+          # [skip ci] keeps this out of the Pages deploy queue — the app reads
+          # this file from raw.githubusercontent.com, so a rebuild would burn
+          # Actions minutes every ten minutes for nothing.
+          git commit -m "Refresh live incidents [skip ci]"
+          # This job runs every 10 min, so a concurrent push is normal rather
+          # than exceptional. Rebase and retry instead of failing the run.
+          for attempt in 1 2 3; do
+            if git push; then exit 0; fi
+            echo "push failed (attempt $attempt) — rebasing"
+            git pull --rebase --autostash origin main || true
+          done
+          echo "::warning::Could not push incident refresh after 3 attempts."

@@ -70,6 +70,27 @@ different cadences:
   has mapped in OSM. Rendered hollow, and they **never sound an alert** until you
   confirm one by eye.
 
+### Live incidents
+
+`live-incidents.json` carries current crashes and hazards from **SCDOT 511** and
+the **Waze** data SCDOT republishes under its Waze for Cities partnership.
+Refreshed every ~10 minutes by `.github/workflows/refresh-incidents.yml`, which
+commits with `[skip ci]` — the app reads the file from the tip of main, so a
+Pages redeploy every ten minutes would be pure waste.
+
+Two honest limits, repeated in the app's own Settings copy:
+
+- **This is incident data, not police dispatch.** No SC agency publishes a live
+  CAD feed. Officers are usually on scene at a crash, which makes this a decent
+  proxy for police activity — but an empty map does not mean an empty road.
+- **The Waze feed contains no police reports.** Verified against the live feed:
+  it carries `ACCIDENT` and `HAZARD` types only. Waze's own police alerts have
+  no public API, and scraping their live-map endpoint would breach their terms,
+  so this app doesn't.
+
+Incidents are never persisted to IndexedDB — a stale incident is worse than no
+incident, so they simply disappear when you go offline.
+
 ### Why the WiGLE patterns are so narrow
 
 A naive `%flock%` search is almost all noise — restaurants, home networks, sports

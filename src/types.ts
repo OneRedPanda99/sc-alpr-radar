@@ -18,7 +18,8 @@ export type CameraKind =
   | "traffic"
   | "gunshot"
   | "police"
-  | "radio";
+  | "radio"
+  | "incident";
 
 /** Kinds that are never alerted on or routed around (reference points only). */
 export const PASSIVE_KINDS: ReadonlySet<CameraKind> = new Set<CameraKind>([
@@ -65,6 +66,10 @@ export interface Camera {
   evidence?: string;
   /** Radio frequencies in MHz, for `radio` transmitter sites. */
   frequencies?: number[];
+  /** Where a live `incident` came from (SCDOT or Waze). */
+  source?: string;
+  /** ISO time a live `incident` was reported, when the feed provides one. */
+  reportedAt?: string;
 }
 
 export interface CameraDataset {
@@ -142,6 +147,10 @@ export interface Settings {
   showRadio: boolean;
   /** Show/hide unconfirmed RF-derived camera sightings. */
   showUnconfirmed: boolean;
+  /** Show/hide live road incidents (SCDOT 511 + Waze). */
+  showIncidents: boolean;
+  /** Play alert sound when approaching a live incident. */
+  alertIncidents: boolean;
   /** Also play alert sound for traffic/CCTV + gunshot detectors. */
   alertTraffic: boolean;
   /** Also play alert sound for unconfirmed RF sightings. */

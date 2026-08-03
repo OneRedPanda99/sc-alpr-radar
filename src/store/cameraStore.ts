@@ -13,7 +13,11 @@ import {
   saveRadioCache,
 } from "@/services/storage";
 import { fetchCommunityCameras } from "@/services/community";
-import { fetchRadioSites, fetchWigleCandidates } from "@/services/extraLayers";
+import {
+  fetchLiveIncidents,
+  fetchRadioSites,
+  fetchWigleCandidates,
+} from "@/services/extraLayers";
 import { PACK_SCHEMA_VERSION, updateCameras } from "@/services/sync";
 
 type Status = "idle" | "loading" | "ready" | "empty" | "error";
@@ -30,7 +34,12 @@ interface CameraState {
    * candidates. Grouped because they load and cache identically.
    */
   extra: Camera[];
-  /** Combined view (pack + community + custom + extra) used by map and alerts. */
+  /**
+   * Live road incidents. Deliberately not persisted — a stale incident is worse
+   * than no incident, so these simply vanish when you go offline.
+   */
+  incidents: Camera[];
+  /** Combined view (pack + community + custom + extra + incidents). */
   dataset: CameraDataset | null;
   grid: CameraGrid | null;
   status: Status;
@@ -41,6 +50,7 @@ interface CameraState {
   addCamera: (camera: Camera) => Promise<void>;
   updateCamera: (id: string, patch: Partial<Camera>) => Promise<void>;
   removeCamera: (id: string) => Promise<void>;
+  refreshIncidents: () => Promise<void>;
 }
 
 function combine(
@@ -48,6 +58,7 @@ function combine(
   community: Camera[],
   custom: Camera[],
   extra: Camera[] = [],
+  incidents: Camera[] = [],
 ): CameraDataset {
   // Drop local customs that already exist in the shared dataset (e.g. after the
   // user shared one and it was accepted) so they don't appear twice.
@@ -60,6 +71,7 @@ function combine(
     ...community,
     ...localOnly,
     ...extra,
+    ...incidents,
   ];
   return {
     generatedAt: pack?.generatedAt ?? new Date().toISOString(),
@@ -82,6 +94,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
   community: [],
   custom: [],
   extra: [],
+  incidents: [],
   dataset: null,
   grid: null,
   status: "idle",
@@ -111,7 +124,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
       const custom = await loadCustomCameras();
       const community = await loadCommunityCache();
       const extra = await loadRadioCache();
-      const dataset = combine(pack, community, custom, extra);
+      const dataset = combine(pack, community, custom, extra, get().incidents);
       set({
         pack,
         community,
@@ -137,6 +150,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
             get().community,
             get().custom,
             fresh,
+            get().incidents,
           );
           set({
             extra: fresh,
@@ -147,13 +161,15 @@ export const useCameraStore = create<CameraState>((set, get) => ({
         },
       );
 
+      void get().refreshIncidents();
+
       // Refresh the shared community dataset in the background (non-blocking).
       // Prefer tip-of-main sources so newly approved cameras appear without a
       // Pages redeploy. `null` means every source failed; keep the cache.
       void fetchCommunityCameras().then((fresh) => {
         if (fresh == null) return;
         void saveCommunityCache(fresh);
-        const next = combine(get().pack, fresh, get().custom, get().extra);
+        const next = combine(get().pack, fresh, get().custom, get().extra, get().incidents);
         set({
           community: fresh,
           dataset: next,
@@ -172,7 +188,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
       const pack = await updateCameras(source);
       const community = (await fetchCommunityCameras()) ?? get().community;
       void saveCommunityCache(community);
-      const dataset = combine(pack, community, get().custom, get().extra);
+      const dataset = combine(pack, community, get().custom, get().extra, get().incidents);
       set({
         pack,
         community,
@@ -189,7 +205,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
   addCamera: async (camera) => {
     const custom = [...get().custom, camera];
     await saveCustomCameras(custom);
-    const dataset = combine(get().pack, get().community, custom, get().extra);
+    const dataset = combine(get().pack, get().community, custom, get().extra, get().incidents);
     set({
       custom,
       dataset,
@@ -203,7 +219,7 @@ export const useCameraStore = create<CameraState>((set, get) => ({
       c.id === id ? { ...c, ...patch, id: c.id, custom: true } : c,
     );
     await saveCustomCameras(custom);
-    const dataset = combine(get().pack, get().community, custom, get().extra);
+    const dataset = combine(get().pack, get().community, custom, get().extra, get().incidents);
     set({
       custom,
       dataset,
@@ -211,10 +227,30 @@ export const useCameraStore = create<CameraState>((set, get) => ({
     });
   },
 
+  refreshIncidents: async () => {
+    const incidents = await fetchLiveIncidents();
+    // null means every mirror failed; keep whatever we already had rather than
+    // blanking the layer on one bad poll.
+    if (incidents == null) return;
+    const next = combine(
+      get().pack,
+      get().community,
+      get().custom,
+      get().extra,
+      incidents,
+    );
+    set({
+      incidents,
+      dataset: next,
+      grid: new CameraGrid(next.cameras),
+      status: next.count > 0 ? "ready" : "empty",
+    });
+  },
+
   removeCamera: async (id) => {
     const custom = get().custom.filter((c) => c.id !== id);
     await saveCustomCameras(custom);
-    const dataset = combine(get().pack, get().community, custom, get().extra);
+    const dataset = combine(get().pack, get().community, custom, get().extra, get().incidents);
     set({
       custom,
       dataset,

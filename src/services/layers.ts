@@ -1,16 +1,12 @@
 import type { Camera, CameraKind, Settings } from "@/types";
 import { PASSIVE_KINDS } from "@/types";
 
-type VisibilitySettings = Pick<
-  Settings,
-  | "showAlpr"
-  | "showTraffic"
-  | "showGunshot"
-  | "showPolice"
-  | "showRadio"
-  | "showUnconfirmed"
-  | "flockOnly"
->;
+/**
+ * Takes the whole Settings object rather than a hand-listed Pick: every new
+ * layer previously meant updating this type *and* the literal spelled out at
+ * each call site, which broke the build every time and taught nothing.
+ */
+type VisibilitySettings = Settings;
 
 /** Which layer toggle governs a given kind. */
 export function kindVisible(kind: CameraKind, s: VisibilitySettings): boolean {
@@ -26,6 +22,8 @@ export function kindVisible(kind: CameraKind, s: VisibilitySettings): boolean {
       return s.showPolice;
     case "radio":
       return s.showRadio;
+    case "incident":
+      return s.showIncidents;
   }
 }
 
@@ -38,7 +36,12 @@ export function makeIsShown(s: VisibilitySettings): (c: Camera) => boolean {
   return (c) => {
     if (!kindVisible(c.kind, s)) return false;
     if (c.unconfirmed && !s.showUnconfirmed) return false;
-    if (c.kind === "gunshot" || c.kind === "police" || c.kind === "radio") {
+    if (
+      c.kind === "gunshot" ||
+      c.kind === "police" ||
+      c.kind === "radio" ||
+      c.kind === "incident"
+    ) {
       return true;
     }
     return !s.flockOnly || c.brand === "Flock Safety" || !!c.custom;
@@ -56,13 +59,14 @@ export function makeIsShown(s: VisibilitySettings): (c: Camera) => boolean {
  * stay visible on the map as reference points instead.
  */
 export function makeIsAlertable(
-  s: VisibilitySettings & Pick<Settings, "alertTraffic" | "alertUnconfirmed">,
+  s: Settings,
 ): (c: Camera) => boolean {
   const isShown = makeIsShown(s);
   return (c) => {
     if (!isShown(c)) return false;
     if (PASSIVE_KINDS.has(c.kind)) return false;
     if (c.unconfirmed) return s.alertUnconfirmed;
+    if (c.kind === "incident") return s.alertIncidents;
     if (c.kind === "traffic" || c.kind === "gunshot") return s.alertTraffic;
     return true;
   };

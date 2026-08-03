@@ -12,7 +12,8 @@
     "lint": "eslint .",
     "fetch:cameras": "node scripts/fetch-sc-cameras.mjs",
     "fetch:wigle": "node scripts/fetch-wigle-cameras.mjs",
-    "fetch:radio": "node scripts/fetch-fcc-radio.mjs"
+    "fetch:radio": "node scripts/fetch-fcc-radio.mjs",
+    "fetch:incidents": "node scripts/fetch-live-incidents.mjs"
   },
   "dependencies": {
     "idb": "^8.0.0",

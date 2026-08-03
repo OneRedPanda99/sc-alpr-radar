@@ -48,13 +48,6 @@ function shouldAvoidCamera(
 export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
   const { dataset } = useCameraStore();
   const showFov = useSettingsStore((s) => s.showFov);
-  const showAlpr = useSettingsStore((s) => s.showAlpr);
-  const showTraffic = useSettingsStore((s) => s.showTraffic);
-  const showGunshot = useSettingsStore((s) => s.showGunshot);
-  const showPolice = useSettingsStore((s) => s.showPolice);
-  const showRadio = useSettingsStore((s) => s.showRadio);
-  const showUnconfirmed = useSettingsStore((s) => s.showUnconfirmed);
-  const flockOnly = useSettingsStore((s) => s.flockOnly);
   const basemap = useSettingsStore((s) => s.basemap);
   const avoidFlock = useSettingsStore((s) => s.avoidFlock);
   const avoidOtherAlpr = useSettingsStore((s) => s.avoidOtherAlpr);
@@ -64,28 +57,11 @@ export function RouteMode({ onActivateRoute, activeRouteId }: RouteModeProps) {
 
   const [gpsPoint, setGpsPoint] = useState<LatLng | null>(null);
 
+  const settings = useSettingsStore();
   const mapCameras = useMemo(() => {
     if (!dataset) return [];
-    const isShown = makeIsShown({
-      showAlpr,
-      showTraffic,
-      showGunshot,
-      showPolice,
-      showRadio,
-      showUnconfirmed,
-      flockOnly,
-    });
-    return dataset.cameras.filter(isShown);
-  }, [
-    dataset,
-    showAlpr,
-    showTraffic,
-    showGunshot,
-    showPolice,
-    showRadio,
-    showUnconfirmed,
-    flockOnly,
-  ]);
+    return dataset.cameras.filter(makeIsShown(settings));
+  }, [dataset, settings]);
 
   const routeCameras = useMemo(() => {
     if (!dataset) return [];

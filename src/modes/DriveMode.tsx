@@ -42,69 +42,19 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
   const {
     alertDistanceFeet,
     muted,
-    flockOnly,
     headingUp,
     escalate,
     showFov,
     showAlpr,
     showTraffic,
-    showGunshot,
-    showPolice,
-    showRadio,
-    showUnconfirmed,
-    alertTraffic,
-    alertUnconfirmed,
     alertSound,
     basemap,
     set: setSetting,
   } = useSettingsStore();
 
-  const isShown = useMemo(
-    () =>
-      makeIsShown({
-        showAlpr,
-        showTraffic,
-        showGunshot,
-        showPolice,
-        showRadio,
-        showUnconfirmed,
-        flockOnly,
-      }),
-    [
-      showAlpr,
-      showTraffic,
-      showGunshot,
-      showPolice,
-      showRadio,
-      showUnconfirmed,
-      flockOnly,
-    ],
-  );
-  const isAlertable = useMemo(
-    () =>
-      makeIsAlertable({
-        showAlpr,
-        showTraffic,
-        showGunshot,
-        showPolice,
-        showRadio,
-        showUnconfirmed,
-        flockOnly,
-        alertTraffic,
-        alertUnconfirmed,
-      }),
-    [
-      showAlpr,
-      showTraffic,
-      showGunshot,
-      showPolice,
-      showRadio,
-      showUnconfirmed,
-      flockOnly,
-      alertTraffic,
-      alertUnconfirmed,
-    ],
-  );
+  const settings = useSettingsStore();
+  const isShown = useMemo(() => makeIsShown(settings), [settings]);
+  const isAlertable = useMemo(() => makeIsAlertable(settings), [settings]);
 
   const [driving, setDriving] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);

@@ -63,6 +63,11 @@ export function SettingsMode() {
           checked={s.alertUnconfirmed}
           onChange={(v) => s.set("alertUnconfirmed", v)}
         />
+        <Toggle
+          label="Beep for live road incidents"
+          checked={s.alertIncidents}
+          onChange={(v) => s.set("alertIncidents", v)}
+        />
         <p className="tip" style={{ marginTop: 0 }}>
           Everything alerts by default. Police stations and radio towers are the
           exception — you pass too many for beeping to mean anything, so they
@@ -186,6 +191,17 @@ export function SettingsMode() {
           checked={s.showUnconfirmed}
           onChange={(v) => s.set("showUnconfirmed", v)}
         />
+        <Toggle
+          label="Show live road incidents"
+          checked={s.showIncidents}
+          onChange={(v) => s.set("showIncidents", v)}
+        />
+        <p className="tip" style={{ marginTop: 0 }}>
+          Live crashes and hazards from SCDOT 511 and Waze, refreshed every ~10
+          minutes. Officers are usually on scene at a crash — but this is
+          incident data, not police dispatch. No SC agency publishes a live
+          dispatch feed, so an empty map does not mean an empty road.
+        </p>
         <p className="tip" style={{ marginTop: 0 }}>
           Unconfirmed sightings are cameras found by their WiFi signature but not
           verified by eye. They never sound an alert — tap one to confirm or

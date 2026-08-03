@@ -13,11 +13,27 @@ export default function App() {
 
   const hydrateCameras = useCameraStore((s) => s.hydrate);
   const hydrateSettings = useSettingsStore((s) => s.hydrate);
+  const refreshIncidents = useCameraStore((s) => s.refreshIncidents);
 
   useEffect(() => {
     void hydrateCameras();
     void hydrateSettings();
   }, [hydrateCameras, hydrateSettings]);
+
+  // Live incidents are rebuilt every ~10 minutes upstream. Poll a little more
+  // often than that, and re-poll on regaining focus so a phone that was asleep
+  // in your pocket isn't showing a stale road.
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") void refreshIncidents();
+    };
+    const timer = setInterval(tick, 4 * 60 * 1000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [refreshIncidents]);
 
   const handleActivateRoute = (route: SavedRoute) => {
     setActiveRoute(route);

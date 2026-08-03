@@ -47,11 +47,13 @@ export const DEFAULT_SETTINGS: Settings = {
   showPolice: true,
   showRadio: false,
   showUnconfirmed: true,
+  showIncidents: true,
   // Alert on everything detectable by default; each kind can be turned off
   // individually. Police stations and radio towers are the exception — see
   // PASSIVE_KINDS.
   alertTraffic: true,
   alertUnconfirmed: true,
+  alertIncidents: true,
   basemap: "streets",
   avoidFlock: true,
   avoidOtherAlpr: true,
