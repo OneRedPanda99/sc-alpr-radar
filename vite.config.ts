@@ -54,9 +54,16 @@ export default defineConfig({
               url.pathname.includes("/data/") &&
               (url.pathname.endsWith(".geojson") ||
                 url.pathname.endsWith(".json")),
-            handler: "StaleWhileRevalidate",
+            // NetworkFirst, not StaleWhileRevalidate: SWR hands the app the old
+            // file on every first load after a deploy, so a data update appears
+            // to "lose" cameras until you reload a second time. Worse, the app
+            // stamps whatever it parses with the current schema version, so a
+            // stale copy could get marked current and stick permanently.
+            // 6s keeps a bad hotspot from stalling the map before falling back.
+            handler: "NetworkFirst",
             options: {
               cacheName: "alpr-data",
+              networkTimeoutSeconds: 6,
               cacheableResponse: { statuses: [200] },
             },
           },
