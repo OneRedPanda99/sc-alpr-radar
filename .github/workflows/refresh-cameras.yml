@@ -12,6 +12,10 @@ on:
 
 permissions:
   contents: write
+  # Needed by the "Redeploy site" step below: createWorkflowDispatch is an
+  # Actions API call, and contents:write alone gets "Resource not accessible
+  # by integration".
+  actions: write
 
 concurrency:
   group: refresh-cameras
