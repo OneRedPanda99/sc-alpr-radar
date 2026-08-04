@@ -135,6 +135,7 @@ export function LiveCameraVideo({
     dragRef.current = null;
   }, []);
 
+
   // Reset per camera so a previous camera's failures never poison the next one.
   useEffect(() => {
     setUseStill(!camera.streamUrl);
@@ -257,6 +258,74 @@ export function LiveCameraVideo({
       v?.webkitEnterFullscreen?.();
     }
   }, [fullscreenTarget]);
+
+  /**
+   * Keyboard shortcuts, for driving the viewer from a laptop.
+   *
+   * Bound on window rather than the player so they work without clicking the
+   * video first — but skipped whenever focus is in a text field, so typing a
+   * destination doesn't pause the feed. Space is also swallowed to stop the
+   * page scrolling under the player.
+   */
+  useEffect(() => {
+    if (useStill) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement as HTMLElement | null;
+      if (
+        el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.tagName === "SELECT" ||
+          el.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      switch (e.key) {
+        case " ":
+        case "k":
+          e.preventDefault();
+          togglePause();
+          break;
+        case "ArrowLeft":
+        case "j":
+          e.preventDefault();
+          nudge(-3);
+          break;
+        case "ArrowRight":
+        case "l":
+          e.preventDefault();
+          goLive();
+          break;
+        case "z":
+          e.preventDefault();
+          cycleZoom();
+          break;
+        case "d":
+          e.preventDefault();
+          setSetting("dimHeadlights", !dimHeadlights);
+          break;
+        case "f":
+          e.preventDefault();
+          toggleFullscreen();
+          break;
+        default:
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [
+    useStill,
+    togglePause,
+    nudge,
+    goLive,
+    cycleZoom,
+    toggleFullscreen,
+    setSetting,
+    dimHeadlights,
+  ]);
 
   if (useStill) {
     return (

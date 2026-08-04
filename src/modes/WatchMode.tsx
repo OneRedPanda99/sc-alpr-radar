@@ -5,10 +5,35 @@ import { LiveCameraVideo, isLiveCamera } from "@/components/LiveCameraImage";
 import { useCameraStore } from "@/store/cameraStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { makeIsShown } from "@/services/layers";
-import { haversineMeters, metersToFeet } from "@/services/geo";
+import { FALLBACK_CENTER, haversineMeters, metersToFeet } from "@/services/geo";
 
-/** Columbia, as a sensible default view before we have a GPS fix. */
-const FALLBACK_CENTER = { lat: 34.0007, lon: -81.0348 };
+/**
+ * Symbol per incident type, matched against the headline the feed gives us
+ * (SCDOT writes "Crash"; Waze subtypes are normalised upstream into things
+ * like "Lane Closed" and "Car Stopped"). Ordered most specific first, since
+ * "Road Closed" would otherwise be caught by the "closed" test for lanes.
+ */
+const INCIDENT_SYMBOLS: [RegExp, string][] = [
+  [/major crash/i, "🛑"],
+  [/crash|accident|collision/i, "💥"],
+  [/road closed|closure/i, "⛔"],
+  [/lane closed/i, "🚧"],
+  [/construction|road ?work/i, "🚧"],
+  [/car stopped|stopped vehicle|disabled/i, "🚗"],
+  [/object|debris/i, "⚠️"],
+  [/fog|weather|ice|snow|flood/i, "🌫️"],
+  [/animal/i, "🦌"],
+  [/police/i, "🚓"],
+  [/fire/i, "🔥"],
+];
+
+function incidentSymbol(camera: Camera): string {
+  const text = `${camera.name ?? ""} ${camera.purpose ?? ""}`;
+  for (const [pattern, symbol] of INCIDENT_SYMBOLS) {
+    if (pattern.test(text)) return symbol;
+  }
+  return "❗";
+}
 
 function minutesAgo(iso?: string): string {
   if (!iso) return "";
@@ -152,10 +177,15 @@ export function WatchMode() {
               {incidents.slice(0, 25).map(({ c, d }) => (
                 <li key={c.id}>
                   <button type="button" onClick={() => setSelectedId(c.id)}>
-                    <span className="wf-head">{c.name}</span>
-                    <span className="wf-meta">
-                      {(d / 1609).toFixed(1)} mi · {c.source}
-                      {c.reportedAt ? ` · ${minutesAgo(c.reportedAt)}` : ""}
+                    <span className="wf-sym" aria-hidden="true">
+                      {incidentSymbol(c)}
+                    </span>
+                    <span className="wf-text">
+                      <span className="wf-head">{c.name}</span>
+                      <span className="wf-meta">
+                        {(d / 1609).toFixed(1)} mi · {c.source}
+                        {c.reportedAt ? ` · ${minutesAgo(c.reportedAt)}` : ""}
+                      </span>
                     </span>
                   </button>
                 </li>

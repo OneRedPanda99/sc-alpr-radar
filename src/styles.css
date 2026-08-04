@@ -433,8 +433,8 @@ body {
 
 .watch-feed-list button {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   padding: 8px 10px;
   border: none;
@@ -447,6 +447,22 @@ body {
 
 .watch-feed-list button:hover {
   background: var(--panel-3);
+}
+
+/* Fixed width so headlines stay left-aligned no matter the symbol. */
+.wf-sym {
+  flex: none;
+  width: 22px;
+  font-size: 16px;
+  line-height: 1;
+  text-align: center;
+}
+
+.wf-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .wf-head {

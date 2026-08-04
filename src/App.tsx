@@ -7,6 +7,7 @@ import { WatchMode } from "@/modes/WatchMode";
 import { useCameraStore } from "@/store/cameraStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { Icon, type IconName } from "@/components/Icon";
+import { FALLBACK_CENTER } from "@/services/geo";
 
 export default function App() {
   const [mode, setMode] = useState<AppMode>("drive");
@@ -46,18 +47,36 @@ export default function App() {
   // Aircraft move ~2.5 miles a minute, so this polls far harder than the
   // incident layer and only while the tab is visible and the layer is on.
   useEffect(() => {
-    if (!showAircraft || !("geolocation" in navigator)) return;
+    if (!showAircraft) return;
     let cancelled = false;
+    // Remembered across polls so a single GPS timeout doesn't blank the layer.
+    let last: { lat: number; lon: number } | null = null;
+
     const poll = () => {
       if (cancelled || document.visibilityState !== "visible") return;
+
+      const run = (lat: number, lon: number) => {
+        if (cancelled) return;
+        last = { lat, lon };
+        void refreshAircraft(lat, lon);
+      };
+
+      if (!("geolocation" in navigator)) {
+        run(last?.lat ?? FALLBACK_CENTER.lat, last?.lon ?? FALLBACK_CENTER.lon);
+        return;
+      }
+
       navigator.geolocation.getCurrentPosition(
-        (p) => {
-          if (!cancelled) void refreshAircraft(p.coords.latitude, p.coords.longitude);
-        },
-        () => {},
+        (p) => run(p.coords.latitude, p.coords.longitude),
+        // Denied, timed out, or unavailable. Falling back to the last known
+        // position (or Columbia) beats showing an empty sky forever with no
+        // explanation, which is exactly how this looked broken.
+        () =>
+          run(last?.lat ?? FALLBACK_CENTER.lat, last?.lon ?? FALLBACK_CENTER.lon),
         { enableHighAccuracy: false, timeout: 8000, maximumAge: 120000 },
       );
     };
+
     poll();
     const timer = setInterval(poll, 25000);
     document.addEventListener("visibilitychange", poll);

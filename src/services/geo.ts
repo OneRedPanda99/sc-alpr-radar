@@ -1,5 +1,11 @@
 import type { Camera, LatLng } from "@/types";
 
+/**
+ * Columbia. Used whenever we need a map centre before (or instead of) a GPS
+ * fix — denied permission shouldn't mean a blank map or an empty sky.
+ */
+export const FALLBACK_CENTER: LatLng = { lat: 34.0007, lon: -81.0348 };
+
 export const FEET_PER_METER = 3.28084;
 export const feetToMeters = (ft: number) => ft / FEET_PER_METER;
 export const metersToFeet = (m: number) => m * FEET_PER_METER;
