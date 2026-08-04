@@ -158,11 +158,11 @@ export interface Settings {
   /** Also play alert sound for unconfirmed RF sightings. */
   alertUnconfirmed: boolean;
   /**
-   * Tone curve applied to live camera feeds. Night traffic cams blow out
+   * Headlight dimmer for live camera feeds. Night traffic cams blow out
    * headlights badly; dimming plus added contrast makes the rest of the frame
-   * readable.
+   * readable. Off by default because it hurts an already-dark daytime feed.
    */
-  camExposure: "normal" | "dim" | "night";
+  dimHeadlights: boolean;
   /** Basemap style key. */
   basemap: "streets" | "satellite";
   /** Route avoidance: Flock Safety plate readers. */
