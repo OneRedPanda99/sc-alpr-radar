@@ -1,38 +1,48 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import type { Camera } from "@/types";
 
-/** SCDOT publishes a fresh still roughly once a minute (fallback path only). */
+/** Snapshot refresh cadence (fallback path only). */
 const REFRESH_MS = 30_000;
+
+/** Give the stream this many recovery attempts before falling back to stills. */
+const MAX_RECOVERIES = 3;
 
 /** SCDOT 511 cameras are the only ones with a live feed. */
 export function isLiveCamera(camera: Camera): boolean {
-  return camera.id.startsWith("sc511/") && !!(camera.streamUrl || camera.imageUrl);
+  return (
+    camera.id.startsWith("sc511/") && !!(camera.streamUrl || camera.imageUrl)
+  );
 }
 
 /**
  * Live traffic camera.
  *
- * Prefers the real HLS video stream. SkyVDN serves the playlist and segments
- * with `Access-Control-Allow-Origin: *`, so it plays directly in the browser —
- * via hls.js on Chrome/Firefox/Android, and via the native player on Safari and
- * iOS, which handle .m3u8 in a <video> tag but have no MSE for hls.js to use.
+ * Prefers the HLS stream (SkyVDN sends `Access-Control-Allow-Origin: *`), via
+ * hls.js on Chrome/Firefox/Android and the native player on Safari/iOS.
  *
- * Falls back to the cache-busted still image if the stream fails or the camera
- * has no stream URL. The stills are the only thing SCDOT publishes for some
- * cameras, and a frozen picture beats a dead player.
+ * Fatal errors are *recovered*, not surrendered to. These are 24/7 public
+ * cameras that stall, drop and re-key constantly; treating the first fatal
+ * error as terminal is what made switching cameras and coming back drop to
+ * stills permanently. Only after several failed recoveries do we fall back.
  */
 export function LiveCameraVideo({
   camera,
   onError,
+  fullscreenTarget,
 }: {
   camera: Camera;
   onError?: () => void;
+  /** Element to put fullscreen; defaults to the player itself. */
+  fullscreenTarget?: React.RefObject<HTMLElement>;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const [useStill, setUseStill] = useState(!camera.streamUrl);
   const [playing, setPlaying] = useState(false);
+  const [isFull, setIsFull] = useState(false);
 
+  // Reset per camera so a previous camera's failures never poison the next one.
   useEffect(() => {
     setUseStill(!camera.streamUrl);
     setPlaying(false);
@@ -45,69 +55,130 @@ export function LiveCameraVideo({
 
     let hls: Hls | null = null;
     let cancelled = false;
+    let recoveries = 0;
 
-    const fail = () => {
+    const giveUp = () => {
       if (cancelled) return;
       setUseStill(true);
     };
 
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      // Safari / iOS: native HLS.
+    if (!Hls.isSupported() && video.canPlayType("application/vnd.apple.mpegurl")) {
+      // Safari / iOS: native HLS, no MSE for hls.js to use.
       video.src = url;
-      video.addEventListener("error", fail);
-    } else if (Hls.isSupported()) {
-      hls = new Hls({
-        // These are live cameras — never sit on a buffered backlog, always
-        // jump to the live edge. Without this you drift seconds behind.
-        liveSyncDurationCount: 1,
-        lowLatencyMode: true,
-        // A traffic camera isn't worth retrying forever in the background.
-        manifestLoadingMaxRetry: 2,
-        levelLoadingMaxRetry: 2,
-        fragLoadingMaxRetry: 2,
-      });
-      hls.loadSource(url);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.ERROR, (_e, data) => {
-        if (data.fatal) fail();
-      });
-    } else {
-      fail();
+      video.addEventListener("error", giveUp);
+      void video.play().catch(() => {});
+      return () => {
+        cancelled = true;
+        video.removeEventListener("error", giveUp);
+        video.removeAttribute("src");
+        video.load();
+      };
+    }
+
+    if (!Hls.isSupported()) {
+      giveUp();
       return;
     }
 
-    void video.play().catch(() => {
-      /* autoplay can be refused; the controls still work */
+    hls = new Hls({
+      // Deliberately NOT lowLatencyMode with a 1-segment sync window. These are
+      // plain (non-LL) HLS streams; pinning to the very live edge made them
+      // stall and throw fatal errors within seconds. The default sync window
+      // trades ~10s of latency for a feed that actually stays up.
+      liveSyncDurationCount: 3,
+      manifestLoadingMaxRetry: 4,
+      levelLoadingMaxRetry: 4,
+      fragLoadingMaxRetry: 6,
+    });
+
+    hls.loadSource(url);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      void video.play().catch(() => {});
+    });
+
+    hls.on(Hls.Events.ERROR, (_evt, data) => {
+      if (!data.fatal || cancelled || !hls) return;
+      if (recoveries >= MAX_RECOVERIES) {
+        giveUp();
+        return;
+      }
+      recoveries++;
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        hls.startLoad();
+      } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        hls.recoverMediaError();
+      } else {
+        giveUp();
+      }
     });
 
     return () => {
       cancelled = true;
-      video.removeEventListener("error", fail);
-      if (hls) hls.destroy();
+      hls?.destroy();
       video.removeAttribute("src");
       video.load();
     };
   }, [camera.streamUrl, useStill]);
 
+  useEffect(() => {
+    const onChange = () => setIsFull(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    const el = fullscreenTarget?.current ?? wrapRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+      return;
+    }
+    if (el.requestFullscreen) {
+      void el.requestFullscreen().catch(() => {});
+    } else {
+      // iOS Safari exposes fullscreen only on the video element itself.
+      const v = videoRef.current as
+        | (HTMLVideoElement & { webkitEnterFullscreen?: () => void })
+        | null;
+      v?.webkitEnterFullscreen?.();
+    }
+  }, [fullscreenTarget]);
+
   if (useStill) {
-    return <LiveCameraStill camera={camera} onError={onError} />;
+    return (
+      <LiveCameraStill
+        camera={camera}
+        onError={onError}
+        onFullscreen={toggleFullscreen}
+      />
+    );
   }
 
   return (
-    <div className="live-cam">
+    <div className="live-cam" ref={wrapRef}>
       <video
         ref={videoRef}
         muted
         playsInline
         autoPlay
-        controls={false}
         onPlaying={() => setPlaying(true)}
+        onWaiting={() => setPlaying(false)}
         aria-label={camera.name ?? "Live traffic camera"}
       />
       <div className="live-cam-badge">
         <span className="live-dot" aria-hidden="true" />
         {playing ? "LIVE" : "CONNECTING"}
       </div>
+      <button
+        type="button"
+        className="live-cam-full"
+        onClick={toggleFullscreen}
+        aria-label={isFull ? "Exit fullscreen" : "Fullscreen"}
+        title={isFull ? "Exit fullscreen" : "Fullscreen"}
+      >
+        {isFull ? "✕" : "⛶"}
+      </button>
     </div>
   );
 }
@@ -121,14 +192,21 @@ function ago(from: number): string {
 function LiveCameraStill({
   camera,
   onError,
+  onFullscreen,
 }: {
   camera: Camera;
   onError?: () => void;
+  onFullscreen?: () => void;
 }) {
   const [src, setSrc] = useState(() => `${camera.imageUrl}?t=${Date.now()}`);
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [failed, setFailed] = useState(false);
   const [, tick] = useState(0);
+
+  useEffect(() => {
+    setSrc(`${camera.imageUrl}?t=${Date.now()}`);
+    setFailed(false);
+  }, [camera.imageUrl]);
 
   useEffect(() => {
     if (failed || !camera.imageUrl) return;
@@ -164,6 +242,16 @@ function LiveCameraStill({
       />
       <div className="live-cam-badge still">SNAPSHOT</div>
       {loadedAt && <div className="live-cam-age">{ago(loadedAt)}</div>}
+      {onFullscreen && (
+        <button
+          type="button"
+          className="live-cam-full"
+          onClick={onFullscreen}
+          aria-label="Fullscreen"
+        >
+          ⛶
+        </button>
+      )}
     </div>
   );
 }

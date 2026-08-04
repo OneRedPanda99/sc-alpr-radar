@@ -488,6 +488,37 @@ body {
   letter-spacing: 0.1em;
 }
 
+.live-cam-full {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: rgba(7, 11, 16, 0.78);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.live-cam-full:hover {
+  background: rgba(7, 11, 16, 0.92);
+}
+
+/* Fullscreen shows the whole frame rather than a cover-cropped slice. */
+.live-cam:fullscreen {
+  background: #000;
+}
+
+.live-cam:fullscreen img,
+.live-cam:fullscreen video {
+  object-fit: contain;
+}
+
 .live-cam-badge {
   position: absolute;
   top: 8px;

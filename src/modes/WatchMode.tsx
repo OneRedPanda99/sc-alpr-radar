@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Camera } from "@/types";
 import { MapView } from "@/components/MapView";
-import { LiveCameraImage, isLiveCamera } from "@/components/LiveCameraImage";
+import { LiveCameraVideo, isLiveCamera } from "@/components/LiveCameraImage";
 import { useCameraStore } from "@/store/cameraStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { makeIsShown } from "@/services/layers";
@@ -75,6 +75,17 @@ export function WatchMode() {
 
   const selected = all.find((c) => c.id === selectedId) ?? null;
 
+  /**
+   * Tapping a camera on the map should show its feed, not just its name. Any
+   * other kind (ALPR, station, incident) still just selects, since there is
+   * nothing to watch.
+   */
+  const handleSelect = (id: string) => {
+    setSelectedId(id);
+    const cam = all.find((c) => c.id === id);
+    if (cam && isLiveCamera(cam)) setWatchId(id);
+  };
+
   return (
     <div className="watch-mode">
       <div className="watch-map">
@@ -84,7 +95,7 @@ export function WatchMode() {
           heading={null}
           showFov={settings.showFov}
           basemap={settings.basemap}
-          onSelectCamera={setSelectedId}
+          onSelectCamera={handleSelect}
           highlightIds={selectedId ? new Set([selectedId]) : undefined}
         />
       </div>
@@ -104,7 +115,7 @@ export function WatchMode() {
           {watched ? (
             <>
               <div className="watch-feed">
-                <LiveCameraImage camera={watched} />
+                <LiveCameraVideo camera={watched} />
               </div>
               <div className="watch-feed-name">{watched.name}</div>
             </>
