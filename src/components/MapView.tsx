@@ -4,6 +4,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { Camera, LatLng } from "@/types";
 import { cameraColor } from "@/services/brand";
 import { fovConePolygon } from "@/services/geo";
+import { hasSymbol, mapSymbol } from "@/services/symbols";
 
 const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
 
@@ -37,6 +38,8 @@ interface MapViewProps {
 
 const CAMERA_SOURCE = "cameras";
 const FOV_SOURCE = "fov";
+const SYMBOL_SOURCE = "symbols";
+const SYMBOL_LAYER = "symbol-glyphs";
 const ROUTE_SOURCE = "route";
 const ROUTE_CASING = "route-casing";
 
@@ -54,7 +57,7 @@ function camerasToFC(
 ): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
-    features: cameras.filter(isFiniteCoord).map((c) => ({
+    features: cameras.filter((c) => isFiniteCoord(c) && !hasSymbol(c)).map((c) => ({
       type: "Feature",
       geometry: { type: "Point", coordinates: [c.lon, c.lat] },
       properties: {
@@ -71,6 +74,9 @@ function fovToFC(cameras: Camera[]): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
   for (const c of cameras) {
     if (!isFiniteCoord(c)) continue;
+    // Symbol layers carry their own meaning; a cone under a glyph reads as
+    // noise and, for aircraft, implies a field of view they don't have.
+    if (hasSymbol(c)) continue;
     if (c.omni) {
       // Soft ring for 360° units.
       features.push({
@@ -94,6 +100,29 @@ function fovToFC(cameras: Camera[]): GeoJSON.FeatureCollection {
         properties: { color: cameraColor(c), omni: false },
       });
     }
+  }
+  return { type: "FeatureCollection", features };
+}
+
+/** Points rendered as a glyph rather than a dot (incidents, aircraft, …). */
+function symbolsToFC(
+  cameras: Camera[],
+  highlightIds?: Set<string>,
+): GeoJSON.FeatureCollection {
+  const features: GeoJSON.Feature[] = [];
+  for (const c of cameras) {
+    if (!isFiniteCoord(c)) continue;
+    const symbol = mapSymbol(c);
+    if (!symbol) continue;
+    features.push({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [c.lon, c.lat] },
+      properties: {
+        id: c.id,
+        symbol,
+        highlight: highlightIds?.has(c.id) ?? false,
+      },
+    });
   }
   return { type: "FeatureCollection", features };
 }
@@ -136,6 +165,11 @@ export function MapView({
   const didInitialCenter = useRef(false);
   const onSelectCameraRef = useRef(onSelectCamera);
   onSelectCameraRef.current = onSelectCamera;
+  // The map's handlers are registered once on load, so they'd otherwise close
+  // over the first render's camera array forever.
+  const camerasRef = useRef(cameras);
+  camerasRef.current = cameras;
+  const [bearing, setBearing] = useState(0);
   const placingRef = useRef(placing);
   placingRef.current = placing;
   const onMapClickRef = useRef(onMapClick);
@@ -254,12 +288,70 @@ export function MapView({
         },
       });
 
+      // Emoji are rendered by the browser's own font stack rather than the
+      // basemap glyph atlas, so `text-font` is deliberately omitted — naming a
+      // font the style doesn't ship would drop the glyphs entirely.
+      map.addSource(SYMBOL_SOURCE, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: SYMBOL_LAYER,
+        type: "symbol",
+        source: SYMBOL_SOURCE,
+        layout: {
+          "text-field": ["get", "symbol"],
+          "text-size": [
+            "case",
+            ["boolean", ["get", "highlight"], false],
+            26,
+            18,
+          ],
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+        },
+        paint: {
+          "text-halo-color": "rgba(7,11,16,0.9)",
+          "text-halo-width": 1.4,
+        },
+      });
+
+      map.on("click", SYMBOL_LAYER, (e) => {
+        if (placingRef.current) return;
+        const id = e.features?.[0]?.properties?.id;
+        if (id != null) onSelectCameraRef.current?.(String(id));
+      });
+      map.on("mouseenter", SYMBOL_LAYER, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", SYMBOL_LAYER, () => {
+        map.getCanvas().style.cursor = "";
+      });
+
       map.on("click", "camera-dots", (e) => {
         if (placingRef.current) return; // in placing mode, taps drop a pin
         const f = e.features?.[0];
         const id = f?.properties?.id;
         if (id != null) onSelectCameraRef.current?.(String(id));
       });
+      // Double-click a camera to look the way it looks. MapLibre's default
+      // dblclick is zoom-in, so that's suppressed for this gesture only --
+      // preventDefault on the event stops the zoom without disabling it
+      // everywhere else on the map.
+      const aimAtCamera = (e: maplibregl.MapLayerMouseEvent) => {
+        if (placingRef.current) return;
+        const id = e.features?.[0]?.properties?.id;
+        if (id == null) return;
+        const cam = camerasRef.current.find((c) => c.id === String(id));
+        if (!cam) return;
+        // An omni camera has no single facing worth turning to.
+        const dir = cam.omni ? null : cam.directions.find(Number.isFinite);
+        if (dir == null) return;
+        e.preventDefault();
+        map.easeTo({ bearing: dir, duration: 500 });
+      };
+      map.on("dblclick", "camera-dots", aimAtCamera);
+      map.on("dblclick", SYMBOL_LAYER, aimAtCamera);
+
+      map.on("rotate", () => setBearing(map.getBearing()));
+
       map.on("click", (e) => {
         if (!placingRef.current) return;
         onMapClickRef.current?.({ lat: e.lngLat.lat, lon: e.lngLat.lng });
@@ -292,6 +384,10 @@ export function MapView({
     const src = map.getSource(CAMERA_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
     src.setData(camerasToFC(cameras, highlightIds));
+    const sym = map.getSource(SYMBOL_SOURCE) as
+      | maplibregl.GeoJSONSource
+      | undefined;
+    sym?.setData(symbolsToFC(cameras, highlightIds));
   }, [cameras, highlightIds, ready]);
 
   useEffect(() => {
@@ -380,5 +476,31 @@ export function MapView({
     }
   }, [center, heading, follow, headingUp, ready]);
 
-  return <div ref={containerRef} className="map-container" />;
+  const resetNorth = () => {
+    mapRef.current?.easeTo({ bearing: 0, pitch: 0, duration: 400 });
+  };
+
+  return (
+    <div className="map-container">
+      <div ref={containerRef} className="map-canvas" />
+      {/* Only appears once the map is actually turned — a permanently visible
+          reset control on a north-up map is a button that does nothing. */}
+      {Math.abs(bearing) > 0.5 && (
+        <button
+          type="button"
+          className="map-compass"
+          onClick={resetNorth}
+          aria-label="Reset map to north"
+          title="Reset to north"
+        >
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <g transform={`rotate(${-bearing} 12 12)`}>
+              <path d="M12 3 L15.4 12 L12 10.3 L8.6 12 Z" fill="var(--hot)" />
+              <path d="M12 21 L8.6 12 L12 13.7 L15.4 12 Z" fill="var(--muted)" />
+            </g>
+          </svg>
+        </button>
+      )}
+    </div>
+  );
 }

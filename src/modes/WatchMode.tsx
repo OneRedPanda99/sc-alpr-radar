@@ -5,35 +5,8 @@ import { LiveCameraVideo, isLiveCamera } from "@/components/LiveCameraImage";
 import { useCameraStore } from "@/store/cameraStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { makeIsShown } from "@/services/layers";
+import { incidentSymbol } from "@/services/symbols";
 import { FALLBACK_CENTER, haversineMeters, metersToFeet } from "@/services/geo";
-
-/**
- * Symbol per incident type, matched against the headline the feed gives us
- * (SCDOT writes "Crash"; Waze subtypes are normalised upstream into things
- * like "Lane Closed" and "Car Stopped"). Ordered most specific first, since
- * "Road Closed" would otherwise be caught by the "closed" test for lanes.
- */
-const INCIDENT_SYMBOLS: [RegExp, string][] = [
-  [/major crash/i, "🛑"],
-  [/crash|accident|collision/i, "💥"],
-  [/road closed|closure/i, "⛔"],
-  [/lane closed/i, "🚧"],
-  [/construction|road ?work/i, "🚧"],
-  [/car stopped|stopped vehicle|disabled/i, "🚗"],
-  [/object|debris/i, "⚠️"],
-  [/fog|weather|ice|snow|flood/i, "🌫️"],
-  [/animal/i, "🦌"],
-  [/police/i, "🚓"],
-  [/fire/i, "🔥"],
-];
-
-function incidentSymbol(camera: Camera): string {
-  const text = `${camera.name ?? ""} ${camera.purpose ?? ""}`;
-  for (const [pattern, symbol] of INCIDENT_SYMBOLS) {
-    if (pattern.test(text)) return symbol;
-  }
-  return "❗";
-}
 
 function minutesAgo(iso?: string): string {
   if (!iso) return "";
