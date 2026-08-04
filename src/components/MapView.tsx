@@ -341,14 +341,38 @@ export function MapView({
         if (id == null) return;
         const cam = camerasRef.current.find((c) => c.id === String(id));
         if (!cam) return;
-        // An omni camera has no single facing worth turning to.
-        const dir = cam.omni ? null : cam.directions.find(Number.isFinite);
-        if (dir == null) return;
+        // Prefer a tagged facing; fall back to the roadway bearing for PTZ
+        // cameras. All 767 SCDOT cameras are omni (they pan), so without the
+        // fallback this did nothing at all on exactly the cameras most worth
+        // aiming at.
+        const tagged = cam.omni
+          ? undefined
+          : cam.directions.find((d) => Number.isFinite(d));
+        const dir = tagged ?? cam.roadBearing;
+        if (dir == null || !Number.isFinite(dir)) return;
         e.preventDefault();
         map.easeTo({ bearing: dir, duration: 500 });
       };
       map.on("dblclick", "camera-dots", aimAtCamera);
       map.on("dblclick", SYMBOL_LAYER, aimAtCamera);
+
+      // Touch devices don't emit dblclick on a double-tap, so the gesture is
+      // detected manually: two taps on the same feature inside 320ms.
+      let lastTap = { id: "", at: 0 };
+      const onTouchTap = (e: maplibregl.MapLayerMouseEvent) => {
+        const id = e.features?.[0]?.properties?.id;
+        if (id == null) return;
+        const now = Date.now();
+        const key = String(id);
+        if (lastTap.id === key && now - lastTap.at < 320) {
+          lastTap = { id: "", at: 0 };
+          aimAtCamera(e);
+        } else {
+          lastTap = { id: key, at: now };
+        }
+      };
+      map.on("click", "camera-dots", onTouchTap);
+      map.on("click", SYMBOL_LAYER, onTouchTap);
 
       map.on("rotate", () => setBearing(map.getBearing()));
 

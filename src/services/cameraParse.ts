@@ -93,6 +93,8 @@ export function cameraFromFeatureProps(
     purpose,
     imageUrl: (p.imageUrl as string) || undefined,
     streamUrl: (p.streamUrl as string) || undefined,
+    roadBearing:
+      typeof p.roadBearing === "number" ? p.roadBearing : undefined,
     fovHalfAngle:
       typeof p.fovHalfAngle === "number"
         ? p.fovHalfAngle

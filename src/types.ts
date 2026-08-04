@@ -54,6 +54,12 @@ export interface Camera {
   imageUrl?: string;
   /** Live HLS (.m3u8) stream, for SCDOT 511 traffic cameras. */
   streamUrl?: string;
+  /**
+   * Bearing of the roadway a PTZ camera monitors. Deliberately separate from
+   * `directions`, which drives the FOV cone — a PTZ has no fixed cone, but it
+   * still has a "down the road" direction worth aiming the map at.
+   */
+  roadBearing?: number;
   /** Approximate FOV half-angle in degrees (full cone = 2x). */
   fovHalfAngle: number;
   /** True if the user added this camera manually (stored on device). */

@@ -84,6 +84,11 @@ async function fetchSC511() {
       // Keep the direction as text and treat coverage as omnidirectional.
       const dirRaw = String(p.direction ?? "").trim().toUpperCase();
       const facing = DIR_TO_BEARING[dirRaw] != null ? dirRaw : null;
+      // Kept separately from `directions`: it must not draw a field-of-view
+      // cone (a PTZ has no fixed one), but it is still the best answer to
+      // "which way is this camera looking down the road", which is what
+      // double-tap-to-aim needs.
+      const roadBearing = DIR_TO_BEARING[dirRaw] ?? null;
       const route = p.route ? `${p.route} ` : "";
       out.push({
         type: "Feature",
@@ -105,6 +110,7 @@ async function fetchSC511() {
           // Live HLS stream. SkyVDN serves these with Access-Control-Allow-
           // Origin: *, so the browser can play them directly.
           streamUrl: typeof p.https_url === "string" ? p.https_url : null,
+          roadBearing,
           fovHalfAngle: 180,
         },
       });
