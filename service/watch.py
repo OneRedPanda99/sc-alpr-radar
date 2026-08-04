@@ -70,6 +70,9 @@ class Watcher:
         # clears POLICE_THRESHOLD is indistinguishable from a broken pipeline —
         # you get an empty file either way and no idea which.
         self.recent_scores: deque[float] = deque(maxlen=400)
+        # Large vehicles seen this sweep, saved after scoring so the filename
+        # can carry the score.
+        self.harvest: list = []
         self.running = True
 
         config.OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -103,6 +106,11 @@ class Watcher:
                 pending.extend(self._process_frame(cam, frame))
 
             self._score_appearance(pending)
+            if self.save_crops:
+                for track, cam_id, tid in self.harvest:
+                    if track.best_crop is not None:
+                        self._save_crop(track, cam_id, tid)
+            self.harvest.clear()
             self._publish()
 
             if time.time() - last_report > 30:
@@ -142,7 +150,14 @@ class Watcher:
             if crop.size == 0:
                 continue
             track.crops.append(crop)
-            track.strobe = strobe_score(track.crops)
+            # Strobe only on cars. A chrome tanker scored a perfect 1.0: its
+            # polished surface reflects sky as blue and tail lights as red, and
+            # those reflections shift as it moves — indistinguishable from a
+            # light bar by this test. Trucks and buses also carry amber marker
+            # lights that a roof-band colour test cannot tell from a strobe.
+            track.strobe = (
+                strobe_score(track.crops) if track.cls_name == "car" else 0.0
+            )
 
             # Only classify appearance once a vehicle is close enough to have
             # the pixels for it. Detection works far out; classification doesn't.
@@ -150,6 +165,7 @@ class Watcher:
                 if track.best_crop is None or crop.shape[1] > track.best_crop.shape[1]:
                     track.best_crop = crop
                 needs_appearance.append((track, crop))
+                self.harvest.append((track, cam.id, tid))
 
         return needs_appearance
 
@@ -210,10 +226,7 @@ class Watcher:
             }
 
             if self.save_crops and track.best_crop is not None:
-                # Harvest for training a sharper classifier later.
-                path = config.CROP_DIR / f"{cam_id.replace('/', '_')}_{tid}.jpg"
-                if not path.exists():
-                    cv2.imwrite(str(path), track.best_crop)
+                self._save_crop(track, cam_id, tid)
 
         # Age out hits so one car doesn't leave a permanent dot.
         cutoff = time.time() - config.DETECTION_TTL_S
@@ -235,6 +248,22 @@ class Watcher:
         tmp = config.DETECTIONS_JSON.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8")
         tmp.replace(config.DETECTIONS_JSON)  # atomic; readers never see a partial file
+
+    def _save_crop(self, track, cam_id: str, tid: int) -> None:
+        """Write a crop with its score in the filename.
+
+        Every sufficiently large vehicle is saved, not just the ones that clear
+        the threshold. Until a *confirmed* police car appears in the archive
+        there is no ground truth at all, and no way to tell a detector that
+        misses cruisers from one that works on a road with none on it. Sorting
+        this directory by name puts the highest scores first.
+        """
+        score = int(round(track.police_score * 100))
+        name = f"{score:03d}_{cam_id.replace('/', '_')}_{tid}.jpg"
+        path = config.CROP_DIR / name
+        if path.exists():
+            return
+        cv2.imwrite(str(path), track.best_crop)
 
     def _report(self) -> None:
         live = sum(1 for r in self.readers.values() if r.latest() is not None)
