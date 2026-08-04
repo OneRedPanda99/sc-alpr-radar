@@ -97,11 +97,14 @@ export function LiveCameraVideo({
     }
 
     hls = new Hls({
-      // Deliberately NOT lowLatencyMode with a 1-segment sync window. These are
-      // plain (non-LL) HLS streams; pinning to the very live edge made them
-      // stall and throw fatal errors within seconds. The default sync window
-      // trades ~10s of latency for a feed that actually stays up.
-      liveSyncDurationCount: 3,
+      // Segments run 4-6s, so each one of these is ~5s of latency. 3 put us
+      // ~18s behind; 2 lands nearer 10s. Going to 1 (as an earlier version did,
+      // with lowLatencyMode on a stream that isn't low-latency HLS) left no
+      // buffer at all and stalled within seconds.
+      liveSyncDurationCount: 2,
+      // Rather than seek when we drift, play slightly fast to catch up. Far
+      // gentler than a jump, and it keeps latency from creeping over time.
+      maxLiveSyncPlaybackRate: 1.5,
       manifestLoadingMaxRetry: 4,
       levelLoadingMaxRetry: 4,
       fragLoadingMaxRetry: 6,
@@ -129,8 +132,24 @@ export function LiveCameraVideo({
       }
     });
 
+    // Latency creeps: a stall, a backgrounded tab, or a slow segment leaves
+    // playback sitting further and further behind the live edge, and playing
+    // 1.5x only claws back so much. If we fall badly behind, jump forward.
+    const catchUp = window.setInterval(() => {
+      if (cancelled || video.paused || video.seeking) return;
+      const b = video.buffered;
+      if (!b.length) return;
+      const behind = b.end(b.length - 1) - video.currentTime;
+      if (behind > 20) {
+        // Land a few seconds back from the edge, not on it — seeking to the
+        // very end just starves the buffer and stalls again immediately.
+        video.currentTime = b.end(b.length - 1) - 5;
+      }
+    }, 5000);
+
     return () => {
       cancelled = true;
+      window.clearInterval(catchUp);
       hls?.destroy();
       video.removeAttribute("src");
       video.load();
