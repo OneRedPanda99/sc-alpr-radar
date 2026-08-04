@@ -77,9 +77,13 @@ async function fetchSC511() {
       const [lon, lat] = f.geometry?.coordinates ?? [];
       if (lon == null || lat == null || p.active === false) continue;
       if (p.problem_stream === true) continue;
+      // SCDOT's `direction` is the *roadway* travel direction it monitors
+      // (NB/SB/EB/WB, or "Median"), not where the camera points. These are PTZ
+      // domes that pan nearly all the way around, so drawing a narrow cone from
+      // that field claims a fixed field of view the hardware doesn't have.
+      // Keep the direction as text and treat coverage as omnidirectional.
       const dirRaw = String(p.direction ?? "").trim().toUpperCase();
-      const bearing = DIR_TO_BEARING[dirRaw];
-      const directions = bearing == null ? [] : [bearing];
+      const facing = DIR_TO_BEARING[dirRaw] != null ? dirRaw : null;
       const route = p.route ? `${p.route} ` : "";
       out.push({
         type: "Feature",
@@ -91,15 +95,17 @@ async function fetchSC511() {
           rawBrand: "SCDOT",
           name: p.description || p.name || "SCDOT traffic camera",
           operator: "SCDOT (511)",
-          directions,
-          omni: false,
+          directions: [],
+          omni: true,
           zone: "traffic",
-          purpose: `SCDOT live traffic camera${route ? ` — ${route.trim()}` : ""}`,
+          purpose:
+            `SCDOT pan-tilt-zoom traffic camera${route ? ` — ${route.trim()}` : ""}` +
+            (facing ? `, covering ${facing} traffic` : ""),
           imageUrl: typeof p.image_url === "string" ? p.image_url : null,
           // Live HLS stream. SkyVDN serves these with Access-Control-Allow-
           // Origin: *, so the browser can play them directly.
           streamUrl: typeof p.https_url === "string" ? p.https_url : null,
-          fovHalfAngle: 30,
+          fovHalfAngle: 180,
         },
       });
     }
