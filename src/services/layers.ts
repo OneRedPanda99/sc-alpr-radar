@@ -24,6 +24,8 @@ export function kindVisible(kind: CameraKind, s: VisibilitySettings): boolean {
       return s.showRadio;
     case "incident":
       return s.showIncidents;
+    case "aircraft":
+      return s.showAircraft;
   }
 }
 
@@ -40,7 +42,8 @@ export function makeIsShown(s: VisibilitySettings): (c: Camera) => boolean {
       c.kind === "gunshot" ||
       c.kind === "police" ||
       c.kind === "radio" ||
-      c.kind === "incident"
+      c.kind === "incident" ||
+      c.kind === "aircraft"
     ) {
       return true;
     }

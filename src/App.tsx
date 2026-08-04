@@ -15,6 +15,8 @@ export default function App() {
   const hydrateCameras = useCameraStore((s) => s.hydrate);
   const hydrateSettings = useSettingsStore((s) => s.hydrate);
   const refreshIncidents = useCameraStore((s) => s.refreshIncidents);
+  const refreshAircraft = useCameraStore((s) => s.refreshAircraft);
+  const showAircraft = useSettingsStore((s) => s.showAircraft);
 
   useEffect(() => {
     void hydrateCameras();
@@ -40,6 +42,31 @@ export default function App() {
     setActiveRoute(route);
     setMode("drive");
   };
+
+  // Aircraft move ~2.5 miles a minute, so this polls far harder than the
+  // incident layer and only while the tab is visible and the layer is on.
+  useEffect(() => {
+    if (!showAircraft || !("geolocation" in navigator)) return;
+    let cancelled = false;
+    const poll = () => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      navigator.geolocation.getCurrentPosition(
+        (p) => {
+          if (!cancelled) void refreshAircraft(p.coords.latitude, p.coords.longitude);
+        },
+        () => {},
+        { enableHighAccuracy: false, timeout: 8000, maximumAge: 120000 },
+      );
+    };
+    poll();
+    const timer = setInterval(poll, 25000);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", poll);
+    };
+  }, [showAircraft, refreshAircraft]);
 
   return (
     <div className="app">

@@ -223,6 +223,11 @@ export function SettingsMode() {
           checked={s.showIncidents}
           onChange={(v) => s.set("showIncidents", v)}
         />
+        <Toggle
+          label="Show aircraft overhead"
+          checked={s.showAircraft}
+          onChange={(v) => s.set("showAircraft", v)}
+        />
         <p className="tip" style={{ marginTop: 0 }}>
           Live crashes and hazards from SCDOT 511 and Waze, refreshed every ~10
           minutes. Officers are usually on scene at a crash — but this is

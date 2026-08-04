@@ -19,7 +19,8 @@ export type CameraKind =
   | "gunshot"
   | "police"
   | "radio"
-  | "incident";
+  | "incident"
+  | "aircraft";
 
 /** Kinds that are never alerted on or routed around (reference points only). */
 export const PASSIVE_KINDS: ReadonlySet<CameraKind> = new Set<CameraKind>([
@@ -72,6 +73,12 @@ export interface Camera {
   source?: string;
   /** ISO time a live `incident` was reported, when the feed provides one. */
   reportedAt?: string;
+  /**
+   * Operator is unambiguously law enforcement. Set for `aircraft` (from the
+   * ADS-B owner field) and `radio` sites (from the FCC licensee), both of which
+   * carry plenty of non-police traffic that shouldn't be implied to be police.
+   */
+  lawEnforcement?: boolean;
 }
 
 export interface CameraDataset {
@@ -151,6 +158,8 @@ export interface Settings {
   showUnconfirmed: boolean;
   /** Show/hide live road incidents (SCDOT 511 + Waze). */
   showIncidents: boolean;
+  /** Show/hide live aircraft overhead (ADS-B). */
+  showAircraft: boolean;
   /** Play alert sound when approaching a live incident. */
   alertIncidents: boolean;
   /** Also play alert sound for traffic/CCTV + gunshot detectors. */
