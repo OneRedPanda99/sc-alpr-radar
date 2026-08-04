@@ -521,6 +521,43 @@ body {
   color: var(--accent);
 }
 
+.live-cam-btn.wide {
+  min-width: 88px;
+}
+
+.live-cam-transport {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  opacity: 0.65;
+  transition: opacity 0.15s ease;
+}
+
+.live-cam:hover .live-cam-transport,
+.live-cam-transport:focus-within {
+  opacity: 1;
+}
+
+/* Zoom happens inside the frame, so the magnified area must not spill out. */
+.live-cam {
+  overflow: hidden;
+}
+
+.live-cam.zoomed {
+  cursor: grab;
+}
+
+.live-cam.zoomed:active {
+  cursor: grabbing;
+}
+
+.live-cam video {
+  transform-origin: center center;
+}
+
 /* Fullscreen shows the whole frame rather than a cover-cropped slice. */
 .live-cam:fullscreen {
   background: #000;

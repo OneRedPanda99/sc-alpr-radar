@@ -57,6 +57,83 @@ export function LiveCameraVideo({
   const [useStill, setUseStill] = useState(!camera.streamUrl);
   const [playing, setPlaying] = useState(false);
   const [isFull, setIsFull] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Reset the viewer when the camera changes; a pan into the corner of the
+  // previous camera's frame is meaningless on the next one.
+  useEffect(() => {
+    setPaused(false);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, [camera.streamUrl]);
+
+  const cycleZoom = useCallback(() => {
+    setZoom((z) => (z >= 4 ? 1 : z * 2));
+    setPan({ x: 0, y: 0 });
+  }, []);
+
+  const togglePause = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      void v.play().catch(() => {});
+      setPaused(false);
+    } else {
+      v.pause();
+      setPaused(true);
+    }
+  }, []);
+
+  /** Step backwards inside the live buffer (a few seconds is all HLS keeps). */
+  const nudge = useCallback((seconds: number) => {
+    const v = videoRef.current;
+    if (!v) return;
+    const b = v.buffered;
+    const floor = b.length ? b.start(0) : 0;
+    v.currentTime = Math.max(floor + 0.1, v.currentTime + seconds);
+    v.pause();
+    setPaused(true);
+  }, []);
+
+  const goLive = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const b = v.buffered;
+    if (b.length) v.currentTime = Math.max(0, b.end(b.length - 1) - 3);
+    void v.play().catch(() => {});
+    setPaused(false);
+  }, []);
+
+  // Drag to pan, but only when zoomed in — otherwise there's nothing to pan to
+  // and dragging would just feel broken.
+  const onPanStart = useCallback(
+    (e: React.PointerEvent) => {
+      if (zoom <= 1) return;
+      dragRef.current = { x: e.clientX, y: e.clientY };
+    },
+    [zoom],
+  );
+
+  const onPanMove = useCallback(
+    (e: React.PointerEvent) => {
+      const start = dragRef.current;
+      if (!start || zoom <= 1) return;
+      const limit = (zoom - 1) * 50;
+      setPan((p) => ({
+        x: Math.max(-limit, Math.min(limit, p.x + (e.clientX - start.x) * 0.15)),
+        y: Math.max(-limit, Math.min(limit, p.y + (e.clientY - start.y) * 0.15)),
+      }));
+      dragRef.current = { x: e.clientX, y: e.clientY };
+    },
+    [zoom],
+  );
+
+  const onPanEnd = useCallback(() => {
+    dragRef.current = null;
+  }, []);
 
   // Reset per camera so a previous camera's failures never poison the next one.
   useEffect(() => {
@@ -136,6 +213,7 @@ export function LiveCameraVideo({
     // playback sitting further and further behind the live edge, and playing
     // 1.5x only claws back so much. If we fall badly behind, jump forward.
     const catchUp = window.setInterval(() => {
+      // Never yank the user back to live while they're inspecting a frame.
       if (cancelled || video.paused || video.seeking) return;
       const b = video.buffered;
       if (!b.length) return;
@@ -191,21 +269,41 @@ export function LiveCameraVideo({
   }
 
   return (
-    <div className="live-cam" ref={wrapRef}>
+    <div
+      className={`live-cam ${zoom > 1 ? "zoomed" : ""}`}
+      ref={wrapRef}
+      onPointerDown={onPanStart}
+      onPointerMove={onPanMove}
+      onPointerUp={onPanEnd}
+      onPointerCancel={onPanEnd}
+    >
       <video
         ref={videoRef}
         muted
         playsInline
         autoPlay
-        style={{ filter: dimHeadlights ? DIM_FILTER : undefined }}
-        onPlaying={() => setPlaying(true)}
+        style={{
+          filter: dimHeadlights ? DIM_FILTER : undefined,
+          transform: `scale(${zoom}) translate(${pan.x}%, ${pan.y}%)`,
+        }}
+        onPlaying={() => {
+          setPlaying(true);
+          setPaused(false);
+        }}
         onWaiting={() => setPlaying(false)}
+        // Track the element's real state, not just our own clicks. Autoplay can
+        // be refused and a backgrounded tab can pause on its own, which
+        // previously left the badge reading LIVE over a frozen frame and made
+        // the Pause button do the opposite of its label.
+        onPause={() => setPaused(true)}
+        onPlay={() => setPaused(false)}
         aria-label={camera.name ?? "Live traffic camera"}
       />
-      <div className="live-cam-badge">
-        <span className="live-dot" aria-hidden="true" />
-        {playing ? "LIVE" : "CONNECTING"}
+      <div className={`live-cam-badge ${paused ? "still" : ""}`}>
+        {!paused && <span className="live-dot" aria-hidden="true" />}
+        {paused ? "PAUSED" : playing ? "LIVE" : "CONNECTING"}
       </div>
+
       <div className="live-cam-controls">
         <button
           type="button"
@@ -218,12 +316,49 @@ export function LiveCameraVideo({
         </button>
         <button
           type="button"
+          className={`live-cam-btn ${zoom > 1 ? "on" : ""}`}
+          onClick={cycleZoom}
+          title="Digital zoom — magnifies, does not add detail"
+        >
+          {zoom}×
+        </button>
+        <button
+          type="button"
           className="live-cam-btn"
           onClick={toggleFullscreen}
           aria-label={isFull ? "Exit fullscreen" : "Fullscreen"}
           title={isFull ? "Exit fullscreen" : "Fullscreen"}
         >
           {isFull ? "✕" : "⛶"}
+        </button>
+      </div>
+
+      {/* Scrubbing the last few seconds is the only real way to study a
+          specific car: paused you can look, live it is gone in one frame. */}
+      <div className="live-cam-transport">
+        <button
+          type="button"
+          className="live-cam-btn"
+          onClick={() => nudge(-3)}
+          title="Back 3 seconds"
+        >
+          ⏴3s
+        </button>
+        <button
+          type="button"
+          className="live-cam-btn wide"
+          onClick={togglePause}
+          title={paused ? "Resume" : "Pause to inspect a frame"}
+        >
+          {paused ? "▶ Resume" : "⏸ Pause"}
+        </button>
+        <button
+          type="button"
+          className="live-cam-btn"
+          onClick={goLive}
+          title="Jump back to live"
+        >
+          Live
         </button>
       </div>
     </div>
