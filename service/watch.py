@@ -101,7 +101,7 @@ class Watcher:
         now = time.time()
         needs_appearance: list[tuple[Track, np.ndarray]] = []
 
-        for tid, cls_name, box in self.detector.detect(frame):
+        for tid, cls_name, box in self.detector.detect(frame, cam.id):
             x1, y1, x2, y2 = box
             key = (cam.id, tid)
             track = self.tracks.get(key)
@@ -230,9 +230,16 @@ class Watcher:
                 print(f"  ✗ {cam.name}")
                 continue
             ok += 1
-            vehicles = list(self.detector.detect(frame))
+            vehicles = list(self.detector.detect(frame, cam.id))
             big = [v for v in vehicles if v[2][2] - v[2][0] >= config.MIN_BOX_W]
-            print(f"  ✓ {cam.name}: {len(vehicles)} vehicles ({len(big)} classifiable)")
+            # Mean luminance separates a genuinely empty road from a black or
+            # placeholder frame, which otherwise both report zero vehicles.
+            bright = float(frame.mean())
+            flag = "  [dark frame — check the feed]" if bright < 18 else ""
+            print(
+                f"  ✓ {cam.name}: {len(vehicles)} vehicles "
+                f"({len(big)} classifiable, brightness {bright:.0f}){flag}"
+            )
         print(f"\n{ok}/{len(self.cameras)} streams delivered a frame")
 
 

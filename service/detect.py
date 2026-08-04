@@ -153,8 +153,87 @@ class Track:
         return ((x1 - x0) / dt, (y1 - y0) / dt)
 
 
+def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+    inter = iw * ih
+    if inter == 0:
+        return 0.0
+    area_a = (ax2 - ax1) * (ay2 - ay1)
+    area_b = (bx2 - bx1) * (by2 - by1)
+    return inter / float(area_a + area_b - inter)
+
+
+class CameraTracker:
+    """Greedy IoU tracker, one instance per camera.
+
+    Ultralytics' built-in tracker keeps its state on the *model*, so a single
+    shared model fed frames from several cameras treats them as one video and
+    associates nothing — which is exactly why five of six cameras reported zero
+    vehicles. Each camera gets its own tracker here instead.
+
+    IoU matching is enough because we sample one camera at a time at 4 fps and
+    only care about a vehicle for the few seconds it's in the near field.
+    """
+
+    def __init__(self, iou_threshold: float = 0.25, max_missed: int = 6):
+        self.iou_threshold = iou_threshold
+        self.max_missed = max_missed
+        self._next_id = 1
+        # track_id -> [box, missed_frames]
+        self._active: dict[int, list] = {}
+
+    def update(self, boxes: list[tuple[int, int, int, int]]) -> list[int]:
+        """Assign a stable id to each box, in the order given."""
+        assigned: list[int] = [-1] * len(boxes)
+        taken: set[int] = set()
+
+        # Best-first matching, so a strong overlap wins over an incidental one.
+        pairs = [
+            (_iou(box, state[0]), i, tid)
+            for i, box in enumerate(boxes)
+            for tid, state in self._active.items()
+        ]
+        pairs.sort(reverse=True)
+
+        used_boxes: set[int] = set()
+        for score, i, tid in pairs:
+            if score < self.iou_threshold:
+                break
+            if i in used_boxes or tid in taken:
+                continue
+            assigned[i] = tid
+            used_boxes.add(i)
+            taken.add(tid)
+            self._active[tid] = [boxes[i], 0]
+
+        for i, box in enumerate(boxes):
+            if assigned[i] != -1:
+                continue
+            tid = self._next_id
+            self._next_id += 1
+            assigned[i] = tid
+            self._active[tid] = [box, 0]
+            taken.add(tid)
+
+        # Anything not seen this frame ages; drop it once it's been gone a while.
+        # `taken` covers both matched and newly created tracks, so a brand-new
+        # one is never penalised on the frame it appeared.
+        for tid in list(self._active):
+            if tid in taken:
+                continue
+            self._active[tid][1] += 1
+            if self._active[tid][1] > self.max_missed:
+                del self._active[tid]
+
+        return assigned
+
+
 class VehicleDetector:
-    """YOLO detection plus Ultralytics' built-in ByteTrack."""
+    """YOLO detection. Tracking is per-camera and lives in CameraTracker."""
 
     def __init__(self, device: str):
         from ultralytics import YOLO
@@ -162,25 +241,34 @@ class VehicleDetector:
         self.device = device
         self.model = YOLO(config.YOLO_MODEL)
         self.model.to(device)
+        self._trackers: dict[str, CameraTracker] = {}
 
-    def detect(self, frame: np.ndarray):
+    def detect(self, frame: np.ndarray, camera_id: str):
         """Yield (track_id, cls_name, box) for vehicles in one frame."""
-        results = self.model.track(
+        results = self.model.predict(
             frame,
-            persist=True,
             verbose=False,
             conf=config.YOLO_CONF,
             classes=list(config.VEHICLE_CLASSES),
-            tracker="bytetrack.yaml",
             device=self.device,
         )
         if not results:
             return
         r = results[0]
-        if r.boxes is None or r.boxes.id is None:
+        if r.boxes is None or len(r.boxes) == 0:
             return
-        ids = r.boxes.id.int().tolist()
-        clss = r.boxes.cls.int().tolist()
-        for tid, cls, xyxy in zip(ids, clss, r.boxes.xyxy.tolist()):
+
+        boxes: list[tuple[int, int, int, int]] = []
+        names: list[str] = []
+        for cls, xyxy in zip(r.boxes.cls.int().tolist(), r.boxes.xyxy.tolist()):
             x1, y1, x2, y2 = (int(v) for v in xyxy)
-            yield tid, config.VEHICLE_CLASSES.get(cls, "vehicle"), (x1, y1, x2, y2)
+            boxes.append((x1, y1, x2, y2))
+            names.append(config.VEHICLE_CLASSES.get(cls, "vehicle"))
+
+        tracker = self._trackers.get(camera_id)
+        if tracker is None:
+            tracker = self._trackers[camera_id] = CameraTracker()
+        ids = tracker.update(boxes)
+
+        for tid, name, box in zip(ids, names, boxes):
+            yield tid, name, box
