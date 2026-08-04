@@ -85,6 +85,12 @@ export interface Camera {
    * carry plenty of non-police traffic that shouldn't be implied to be police.
    */
   lawEnforcement?: boolean;
+  /** Heading in degrees, for `aircraft`. */
+  trackDeg?: number;
+  /** Ground speed in knots, for `aircraft`. */
+  groundSpeedKt?: number;
+  /** epoch ms of the position fix, so it can be dead-reckoned forward. */
+  fixedAt?: number;
 }
 
 export interface CameraDataset {

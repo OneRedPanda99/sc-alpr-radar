@@ -4,7 +4,13 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { Camera, LatLng } from "@/types";
 import { cameraColor } from "@/services/brand";
 import { fovConePolygon } from "@/services/geo";
-import { hasSymbol, mapSymbol } from "@/services/symbols";
+import {
+  aimBearingFor,
+  ALL_SYMBOLS,
+  hasSymbol,
+  mapSymbol,
+  rasterizeSymbol,
+} from "@/services/symbols";
 
 const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
 
@@ -34,6 +40,8 @@ interface MapViewProps {
   /** Called with a tapped location while `placing` is true. */
   onMapClick?: (point: LatLng) => void;
   onReady?: (map: maplibregl.Map) => void;
+  /** Turn the map to this bearing. Bumping the token re-triggers the turn. */
+  aimBearing?: { bearing: number; token: number } | null;
 }
 
 const CAMERA_SOURCE = "cameras";
@@ -156,6 +164,7 @@ export function MapView({
   placing = false,
   onMapClick,
   onReady,
+  aimBearing,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -288,28 +297,30 @@ export function MapView({
         },
       });
 
-      // Emoji are rendered by the browser's own font stack rather than the
-      // basemap glyph atlas, so `text-font` is deliberately omitted — naming a
-      // font the style doesn't ship would drop the glyphs entirely.
+      // Emoji must be registered as images, not drawn via `text-field`: that
+      // path goes through the basemap's monochrome SDF glyph atlas and renders
+      // every emoji as a solid black silhouette.
+      for (const symbol of ALL_SYMBOLS) {
+        if (map.hasImage(symbol)) continue;
+        const img = rasterizeSymbol(symbol);
+        if (img) map.addImage(symbol, img, { pixelRatio: 2 });
+      }
+
       map.addSource(SYMBOL_SOURCE, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: SYMBOL_LAYER,
         type: "symbol",
         source: SYMBOL_SOURCE,
         layout: {
-          "text-field": ["get", "symbol"],
-          "text-size": [
+          "icon-image": ["get", "symbol"],
+          "icon-size": [
             "case",
             ["boolean", ["get", "highlight"], false],
-            26,
-            18,
+            1.25,
+            0.85,
           ],
-          "text-allow-overlap": true,
-          "text-ignore-placement": true,
-        },
-        paint: {
-          "text-halo-color": "rgba(7,11,16,0.9)",
-          "text-halo-width": 1.4,
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
         },
       });
 
@@ -341,15 +352,8 @@ export function MapView({
         if (id == null) return;
         const cam = camerasRef.current.find((c) => c.id === String(id));
         if (!cam) return;
-        // Prefer a tagged facing; fall back to the roadway bearing for PTZ
-        // cameras. All 767 SCDOT cameras are omni (they pan), so without the
-        // fallback this did nothing at all on exactly the cameras most worth
-        // aiming at.
-        const tagged = cam.omni
-          ? undefined
-          : cam.directions.find((d) => Number.isFinite(d));
-        const dir = tagged ?? cam.roadBearing;
-        if (dir == null || !Number.isFinite(dir)) return;
+        const dir = aimBearingFor(cam);
+        if (dir == null) return;
         e.preventDefault();
         map.easeTo({ bearing: dir, duration: 500 });
       };
@@ -499,6 +503,14 @@ export function MapView({
       });
     }
   }, [center, heading, follow, headingUp, ready]);
+
+  // Driven by a token rather than the bearing alone, so aiming twice at the
+  // same camera still turns the map back after you've spun it away.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !aimBearing) return;
+    map.easeTo({ bearing: aimBearing.bearing, duration: 500 });
+  }, [aimBearing, ready]);
 
   const resetNorth = () => {
     mapRef.current?.easeTo({ bearing: 0, pitch: 0, duration: 400 });

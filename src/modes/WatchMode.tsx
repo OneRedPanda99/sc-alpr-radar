@@ -5,7 +5,8 @@ import { LiveCameraVideo, isLiveCamera } from "@/components/LiveCameraImage";
 import { useCameraStore } from "@/store/cameraStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { makeIsShown } from "@/services/layers";
-import { incidentSymbol } from "@/services/symbols";
+import { aimBearingFor, incidentSymbol } from "@/services/symbols";
+import { useMovingAircraft } from "@/hooks/useMovingAircraft";
 import { FALLBACK_CENTER, haversineMeters, metersToFeet } from "@/services/geo";
 
 function minutesAgo(iso?: string): string {
@@ -23,6 +24,7 @@ export function WatchMode() {
   const [center, setCenter] = useState(FALLBACK_CENTER);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [watchId, setWatchId] = useState<string | null>(null);
+  const [aim, setAim] = useState<{ bearing: number; token: number } | null>(null);
 
   useEffect(() => {
     if (!("geolocation" in navigator)) return;
@@ -35,10 +37,12 @@ export function WatchMode() {
 
   const all = dataset?.cameras ?? [];
 
-  const visible = useMemo(
+  const shown = useMemo(
     () => all.filter(makeIsShown(settings)),
     [all, settings],
   );
+  // Glide aircraft between polls rather than teleporting them every 25s.
+  const visible = useMovingAircraft(shown);
 
   const incidents = useMemo(
     () =>
@@ -95,6 +99,7 @@ export function WatchMode() {
           basemap={settings.basemap}
           onSelectCamera={handleSelect}
           highlightIds={selectedId ? new Set([selectedId]) : undefined}
+          aimBearing={aim}
         />
       </div>
 
@@ -167,7 +172,13 @@ export function WatchMode() {
           )}
         </section>
 
-        {selected && <SelectedRow camera={selected} center={center} />}
+        {selected && (
+          <SelectedRow
+            camera={selected}
+            center={center}
+            onAim={(b) => setAim({ bearing: b, token: Date.now() })}
+          />
+        )}
       </aside>
     </div>
   );
@@ -190,14 +201,32 @@ function Stat({
   );
 }
 
-function SelectedRow({ camera, center }: { camera: Camera; center: { lat: number; lon: number } }) {
+function SelectedRow({
+  camera,
+  center,
+  onAim,
+}: {
+  camera: Camera;
+  center: { lat: number; lon: number };
+  onAim: (bearing: number) => void;
+}) {
   const feet = Math.round(metersToFeet(haversineMeters(center, camera)));
+  const bearing = aimBearingFor(camera);
   return (
     <section className="watch-section watch-selected">
       <h3>Selected</h3>
       <div className="wf-head">{camera.name ?? camera.kind}</div>
       <div className="wf-meta">{camera.purpose}</div>
       <div className="wf-meta">{feet.toLocaleString()} ft away</div>
+      {bearing != null && (
+        <button
+          type="button"
+          className="aim-btn"
+          onClick={() => onAim(bearing)}
+        >
+          Aim map down this road
+        </button>
+      )}
       {camera.frequencies?.length ? (
         <div className="wf-meta">
           {camera.frequencies.slice(0, 6).join(" · ")} MHz

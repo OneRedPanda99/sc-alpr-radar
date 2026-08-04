@@ -25,6 +25,7 @@ import {
 } from "@/services/geo";
 import { formatDistance, formatDuration } from "@/services/routing";
 import { makeIsAlertable, makeIsShown } from "@/services/layers";
+import { useMovingAircraft } from "@/hooks/useMovingAircraft";
 
 interface DriveModeProps {
   activeRoute: SavedRoute | null;
@@ -142,10 +143,12 @@ export function DriveMode({ activeRoute }: DriveModeProps) {
     [near],
   );
 
-  const visibleCameras = useMemo(() => {
+  const shownCameras = useMemo(() => {
     if (!dataset) return [];
     return dataset.cameras.filter(isShown);
   }, [dataset, isShown]);
+  // Glide aircraft between polls rather than teleporting them every 25s.
+  const visibleCameras = useMovingAircraft(shownCameras);
 
   // Each count must match exactly what its chip toggles. Lumping every
   // non-ALPR kind into "traffic" would now include radio towers and police

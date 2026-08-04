@@ -105,6 +105,9 @@ export async function fetchAircraft(
           `${speed}${owner}`,
         fovHalfAngle: 30,
         lawEnforcement: le,
+        trackDeg: Number.isFinite(a.track) ? a.track : undefined,
+        groundSpeedKt: Number.isFinite(a.gs) ? a.gs : undefined,
+        fixedAt: Date.now(),
       });
     }
     return out;

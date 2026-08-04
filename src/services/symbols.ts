@@ -56,3 +56,49 @@ export function incidentSymbol(camera: Camera): string {
 export function hasSymbol(camera: Camera): boolean {
   return mapSymbol(camera) != null;
 }
+
+/**
+ * Which way to turn the map to look the way a camera looks. Prefers a tagged
+ * facing, falling back to the roadway bearing for PTZ cameras (which are omni
+ * and so have no tagged facing at all).
+ */
+export function aimBearingFor(camera: Camera): number | null {
+  const tagged = camera.omni
+    ? undefined
+    : camera.directions.find((d) => Number.isFinite(d));
+  const dir = tagged ?? camera.roadBearing;
+  return dir != null && Number.isFinite(dir) ? dir : null;
+}
+
+/** Every glyph the map can draw, so they can be pre-rasterised on load. */
+export const ALL_SYMBOLS: string[] = [
+  ...new Set([...INCIDENT_SYMBOLS.map(([, s]) => s), "❗", "🚁", "✈️", "🚓", "🔊"]),
+];
+
+/**
+ * Rasterise an emoji to pixels for `map.addImage`.
+ *
+ * MapLibre's `text-field` renders through the basemap style's SDF glyph atlas,
+ * which is monochrome — emoji come out as solid black silhouettes. Drawing them
+ * to a canvas and registering them as *images* keeps the real colour glyph and
+ * still renders on the GPU, unlike HTML markers.
+ */
+export function rasterizeSymbol(
+  symbol: string,
+  size = 48,
+): { width: number; height: number; data: Uint8ClampedArray } | null {
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.font = `${Math.round(size * 0.78)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  // A dark rim keeps light glyphs legible over the pale basemap.
+  ctx.shadowColor = "rgba(7,11,16,0.85)";
+  ctx.shadowBlur = 3;
+  ctx.fillText(symbol, size / 2, size / 2 + size * 0.04);
+  const img = ctx.getImageData(0, 0, size, size);
+  return { width: size, height: size, data: img.data };
+}
