@@ -27,6 +27,7 @@ function pickSettings(s: Settings): Settings {
     alertTraffic: s.alertTraffic,
     alertUnconfirmed: s.alertUnconfirmed,
     alertIncidents: s.alertIncidents,
+    camExposure: s.camExposure,
     basemap: s.basemap,
     avoidFlock: s.avoidFlock,
     avoidOtherAlpr: s.avoidOtherAlpr,

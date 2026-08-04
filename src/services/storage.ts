@@ -54,6 +54,7 @@ export const DEFAULT_SETTINGS: Settings = {
   alertTraffic: true,
   alertUnconfirmed: true,
   alertIncidents: true,
+  camExposure: "normal",
   basemap: "streets",
   avoidFlock: true,
   avoidOtherAlpr: true,

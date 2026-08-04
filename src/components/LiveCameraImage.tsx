@@ -1,6 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
-import type { Camera } from "@/types";
+import type { Camera, Settings } from "@/types";
+import { useSettingsStore } from "@/store/settingsStore";
+
+type Exposure = Settings["camExposure"];
+
+/**
+ * Tone curves for night feeds.
+ *
+ * A blown-out headlight is clipped at the sensor — those pixels are pure white
+ * and no filter can invent detail back into them. What this *can* do is stop
+ * the bloom from dominating the frame and lift the surrounding road and
+ * vehicles into a readable range, which is the part you actually want to see.
+ */
+const EXPOSURES: Record<Exposure, { label: string; filter: string }> = {
+  normal: { label: "Auto", filter: "none" },
+  dim: {
+    label: "Dim",
+    filter: "brightness(0.7) contrast(1.3) saturate(0.95)",
+  },
+  night: {
+    label: "Night",
+    filter: "brightness(0.48) contrast(1.7) saturate(0.85)",
+  },
+};
+
+const EXPOSURE_ORDER: Exposure[] = ["normal", "dim", "night"];
 
 /** Snapshot refresh cadence (fallback path only). */
 const REFRESH_MS = 30_000;
@@ -38,6 +63,12 @@ export function LiveCameraVideo({
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const camExposure = useSettingsStore((s) => s.camExposure);
+  const setSetting = useSettingsStore((s) => s.set);
+  const cycleExposure = useCallback(() => {
+    const i = EXPOSURE_ORDER.indexOf(camExposure);
+    setSetting("camExposure", EXPOSURE_ORDER[(i + 1) % EXPOSURE_ORDER.length]);
+  }, [camExposure, setSetting]);
   const [useStill, setUseStill] = useState(!camera.streamUrl);
   const [playing, setPlaying] = useState(false);
   const [isFull, setIsFull] = useState(false);
@@ -162,6 +193,7 @@ export function LiveCameraVideo({
         muted
         playsInline
         autoPlay
+        style={{ filter: EXPOSURES[camExposure].filter }}
         onPlaying={() => setPlaying(true)}
         onWaiting={() => setPlaying(false)}
         aria-label={camera.name ?? "Live traffic camera"}
@@ -170,15 +202,25 @@ export function LiveCameraVideo({
         <span className="live-dot" aria-hidden="true" />
         {playing ? "LIVE" : "CONNECTING"}
       </div>
-      <button
-        type="button"
-        className="live-cam-full"
-        onClick={toggleFullscreen}
-        aria-label={isFull ? "Exit fullscreen" : "Fullscreen"}
-        title={isFull ? "Exit fullscreen" : "Fullscreen"}
-      >
-        {isFull ? "✕" : "⛶"}
-      </button>
+      <div className="live-cam-controls">
+        <button
+          type="button"
+          className={`live-cam-btn ${camExposure !== "normal" ? "on" : ""}`}
+          onClick={cycleExposure}
+          title="Cut headlight glare"
+        >
+          {EXPOSURES[camExposure].label}
+        </button>
+        <button
+          type="button"
+          className="live-cam-btn"
+          onClick={toggleFullscreen}
+          aria-label={isFull ? "Exit fullscreen" : "Fullscreen"}
+          title={isFull ? "Exit fullscreen" : "Fullscreen"}
+        >
+          {isFull ? "✕" : "⛶"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -198,6 +240,7 @@ function LiveCameraStill({
   onError?: () => void;
   onFullscreen?: () => void;
 }) {
+  const camExposure = useSettingsStore((s) => s.camExposure);
   const [src, setSrc] = useState(() => `${camera.imageUrl}?t=${Date.now()}`);
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [failed, setFailed] = useState(false);
@@ -234,6 +277,7 @@ function LiveCameraStill({
       <img
         src={src}
         alt={camera.name ?? "Traffic camera"}
+        style={{ filter: EXPOSURES[camExposure].filter }}
         onLoad={() => setLoadedAt(Date.now())}
         onError={() => {
           setFailed(true);
@@ -243,14 +287,16 @@ function LiveCameraStill({
       <div className="live-cam-badge still">SNAPSHOT</div>
       {loadedAt && <div className="live-cam-age">{ago(loadedAt)}</div>}
       {onFullscreen && (
-        <button
-          type="button"
-          className="live-cam-full"
-          onClick={onFullscreen}
-          aria-label="Fullscreen"
-        >
-          ⛶
-        </button>
+        <div className="live-cam-controls">
+          <button
+            type="button"
+            className="live-cam-btn"
+            onClick={onFullscreen}
+            aria-label="Fullscreen"
+          >
+            ⛶
+          </button>
+        </div>
       )}
     </div>
   );
