@@ -4,6 +4,7 @@ import { brandImage, formatFacing, KIND_LABELS } from "@/services/brand";
 import { metersToFeet } from "@/services/geo";
 import { communitySubmitUrl } from "@/services/community";
 import { Icon } from "@/components/Icon";
+import { isLiveCamera, LiveCameraImage } from "@/components/LiveCameraImage";
 
 function subtitle(camera: Camera): string {
   return camera.kind === "alpr" ? camera.brand : KIND_LABELS[camera.kind];
@@ -217,7 +218,9 @@ export function CameraDetailCard({
         ×
       </button>
       <div className="detail-media">
-        {photo ? (
+        {isLiveCamera(camera) ? (
+          <LiveCameraImage camera={camera} onError={() => setImgFailed(true)} />
+        ) : photo ? (
           <img src={photo} alt={camera.brand} onError={() => setImgFailed(true)} />
         ) : (
           <div className="alert-card-fallback">{camera.brand[0]}</div>

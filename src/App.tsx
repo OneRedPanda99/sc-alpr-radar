@@ -3,6 +3,7 @@ import type { AppMode, SavedRoute } from "@/types";
 import { DriveMode } from "@/modes/DriveMode";
 import { RouteMode } from "@/modes/RouteMode";
 import { SettingsMode } from "@/modes/SettingsMode";
+import { WatchMode } from "@/modes/WatchMode";
 import { useCameraStore } from "@/store/cameraStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { Icon, type IconName } from "@/components/Icon";
@@ -50,6 +51,7 @@ export default function App() {
             activeRouteId={activeRoute?.id ?? null}
           />
         )}
+        {mode === "watch" && <WatchMode />}
         {mode === "settings" && <SettingsMode />}
       </main>
 
@@ -66,6 +68,13 @@ export default function App() {
           value="route"
           label="Route"
           icon="route"
+          onClick={setMode}
+        />
+        <TabButton
+          current={mode}
+          value="watch"
+          label="Overwatch"
+          icon="watch"
           onClick={setMode}
         />
         <TabButton

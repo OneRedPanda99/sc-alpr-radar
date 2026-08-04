@@ -1,8 +1,21 @@
 import type { CSSProperties } from "react";
 
-export type IconName = "drive" | "route" | "settings" | "bearing";
+export type IconName = "drive" | "route" | "watch" | "settings" | "bearing";
 
 const PATHS: Record<IconName, JSX.Element> = {
+  // Eye / overwatch
+  watch: (
+    <>
+      <path
+        d="M2.5 12s3.6-6 9.5-6 9.5 6 9.5 6-3.6 6-9.5 6-9.5-6-9.5-6Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="12" r="2.6" fill="currentColor" />
+    </>
+  ),
   // Steering-wheel / drive
   drive: (
     <>

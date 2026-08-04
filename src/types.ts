@@ -115,7 +115,7 @@ export interface SavedRoute {
   steps: RouteStep[];
 }
 
-export type AppMode = "drive" | "route" | "settings";
+export type AppMode = "drive" | "route" | "watch" | "settings";
 
 export type AlertSoundId =
   | "chirp"

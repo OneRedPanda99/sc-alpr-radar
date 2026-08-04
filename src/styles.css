@@ -276,6 +276,261 @@ body {
   border-top: 1px solid var(--border);
 }
 
+/* ===== Overwatch: map + side panel. Stacks on phones, splits on a laptop. ===== */
+.watch-mode {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: 45% 1fr;
+  min-height: 0;
+}
+
+.watch-map {
+  position: relative;
+  min-height: 0;
+}
+
+.watch-panel {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 14px 14px 24px;
+  background: var(--bg-2);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+@media (min-width: 900px) {
+  .watch-mode {
+    grid-template-rows: none;
+    grid-template-columns: 1fr minmax(320px, 400px);
+  }
+  .watch-panel {
+    border-top: none;
+    border-left: 1px solid var(--border);
+  }
+}
+
+.watch-head h2 {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+
+.watch-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.watch-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+}
+
+.watch-stat-val {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.watch-stat.hot .watch-stat-val {
+  color: var(--hot);
+}
+.watch-stat.info .watch-stat-val {
+  color: var(--info);
+}
+.watch-stat.warm .watch-stat-val {
+  color: var(--warm);
+}
+
+.watch-stat-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.watch-section h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.watch-feed {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--panel-solid);
+}
+
+.watch-feed-name {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.watch-cam-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.watch-cam {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.watch-cam:hover {
+  background: var(--panel-3);
+}
+
+.watch-cam.on {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.watch-cam-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-cam-dist {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.watch-feed-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.watch-feed-list button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.watch-feed-list button:hover {
+  background: var(--panel-3);
+}
+
+.wf-head {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.wf-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.watch-selected {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+
+/* Live SCDOT traffic-camera view */
+.live-cam {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.live-cam img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.live-cam-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(7, 11, 16, 0.78);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hot);
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot {
+    animation: none;
+  }
+}
+
+.live-cam-age {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(7, 11, 16, 0.78);
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .detail-unconfirmed {
   margin: 12px 0 0;
   padding: 9px 11px;
