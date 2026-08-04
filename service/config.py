@@ -24,7 +24,7 @@ CAMERA_PACK = REPO / "public" / "data" / "sc-cameras.geojson"
 # 11 Mbps sustained and ~120 GB/day. Watching all 767 would be 218 Mbps and
 # ~2.3 TB/day, which is impractical and an unreasonable load to put on a public
 # DOT service.
-MAX_CAMERAS = 40
+MAX_CAMERAS = 30
 
 # ---------------------------------------------------------------- sampling --
 
@@ -82,10 +82,17 @@ CIVILIAN_PROMPTS = [
 # usable range. Raise it for a sharper decision, lower it for a softer one.
 SCORE_GAIN = 30.0
 
-# Above this, call it a police vehicle. Tune against the score distribution the
-# watcher prints, not by guessing — the previous 0.62 was meaningless once the
-# scores turned out to be saturated.
-POLICE_THRESHOLD = 0.62
+# Above this, call it a police vehicle.
+#
+# Measured against 3 labelled cruisers and 47 ordinary cars: AUC 0.80, means
+# 0.767 vs 0.591. The Youden-optimal 0.72 catches all three but flags 32% of
+# ordinary traffic, which on a highway is hundreds of false alarms an hour.
+# 0.85 is deliberately stricter — it will miss cruisers, but the hits it does
+# publish are worth looking at, and crops keep harvesting regardless so the
+# labelled set grows either way.
+#
+# Revisit once ~20 cruisers are labelled; three is not enough to tune against.
+POLICE_THRESHOLD = 0.85
 
 # ----------------------------------------------------------------- output ---
 

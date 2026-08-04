@@ -149,14 +149,39 @@ def report() -> None:
     )
 
     print()
-    if auc < 0.65:
-        print("VERDICT: not separating. At this resolution the appearance score")
-        print("is close to a coin flip; tuning the threshold cannot fix that.")
-    elif auc < 0.8:
-        print("VERDICT: weak but real signal. Usable only with a high threshold,")
-        print("accepting that most cruisers are missed.")
+
+    # Sample size first. AUC from a handful of positives is extremely noisy —
+    # three cruisers can produce 0.8 by luck — and quoting it as if it settled
+    # the question is how a promising number becomes a wrong conclusion.
+    if len(police) < 15:
+        print(f"SAMPLE TOO SMALL: {len(police)} cruisers labelled.")
+        print("AUC from this few positives is mostly noise; treat it as a hint,")
+        print("not a result. Label ~15-20 cruisers before trusting any of this.")
+        print()
+
+    # The practical question isn't AUC, it's the false-alarm rate at a
+    # threshold that still catches cruisers. Anything above a few percent
+    # buries real hits on a road carrying hundreds of cars an hour.
+    usable = [
+        (t / 100, sum(1 for p in police if p >= t / 100) / len(police),
+         sum(1 for c in civilian if c >= t / 100) / len(civilian))
+        for t in range(101)
+    ]
+    practical = [(t, tpr, fpr) for t, tpr, fpr in usable if fpr <= 0.05 and tpr > 0]
+    if practical:
+        t, tpr, fpr = max(practical, key=lambda x: x[1])
+        print(f"at 5% false alarms: threshold {t:.2f} catches {tpr*100:.0f}% of cruisers")
     else:
-        print("VERDICT: separating well. Set POLICE_THRESHOLD to the value above.")
+        print("No threshold reaches even 5% false alarms while catching anything.")
+
+    if auc < 0.65:
+        print("VERDICT: not separating. At this resolution the appearance score is")
+        print("close to a coin flip; no threshold fixes that.")
+    elif auc < 0.85 or not practical:
+        print("VERDICT: real but weak signal. Overlap is heavy, so any threshold")
+        print("that catches cruisers also flags a lot of ordinary traffic.")
+    else:
+        print("VERDICT: separating well enough to use at the threshold above.")
 
 
 # --------------------------------------------------------------------- UI ---
