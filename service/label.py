@@ -56,16 +56,64 @@ def score_of(filename: str) -> float | None:
 # ------------------------------------------------------------------ report ---
 
 
+def rescore() -> dict[str, float]:
+    """Run CLIP over every labelled crop and return {filename: score}.
+
+    Crops harvested before scores were written into filenames carry no score at
+    all, so the labels on them would otherwise be unusable. Scoring the images
+    directly recovers them, and is the fastest path to an answer: it needs no
+    new traffic, just the labels already collected.
+    """
+    import cv2
+
+    from detect import PoliceAppearance
+
+    labels = load_labels()
+    files = [f for f in labels if (config.CROP_DIR / f).exists()]
+    if not files:
+        return {}
+
+    print(f"scoring {len(files)} labelled crops ...", flush=True)
+    device = "cuda"
+    try:
+        import torch
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        pass
+
+    model = PoliceAppearance(device)
+    out: dict[str, float] = {}
+    # Batched, since CLIP is far faster on a batch than one image at a time.
+    for i in range(0, len(files), 32):
+        chunk = files[i : i + 32]
+        crops = [cv2.imread(str(config.CROP_DIR / f)) for f in chunk]
+        pairs = [(f, c) for f, c in zip(chunk, crops) if c is not None]
+        if not pairs:
+            continue
+        scores = model.score_batch([c for _, c in pairs])
+        for (f, _), s in zip(pairs, scores):
+            out[f] = s
+    return out
+
+
 def report() -> None:
     labels = load_labels()
     if not labels:
         print("No labels yet. Run `python label.py` and mark some crops first.")
         return
 
-    police = [score_of(f) for f, v in labels.items() if v == "police"]
-    civilian = [score_of(f) for f, v in labels.items() if v == "civilian"]
-    police = [s for s in police if s is not None]
-    civilian = [s for s in civilian if s is not None]
+    # Prefer the score baked into the filename; fall back to re-scoring the
+    # image for older crops that predate that.
+    scores = {f: score_of(f) for f in labels}
+    if any(v is None for v in scores.values()):
+        fresh = rescore()
+        for f, v in fresh.items():
+            if scores.get(f) is None:
+                scores[f] = v
+
+    police = [scores[f] for f, v in labels.items() if v == "police" and scores.get(f) is not None]
+    civilian = [scores[f] for f, v in labels.items() if v == "civilian" and scores.get(f) is not None]
 
     print(f"labelled: {len(labels)}  (police {len(police)}, civilian {len(civilian)})")
     if not police:
