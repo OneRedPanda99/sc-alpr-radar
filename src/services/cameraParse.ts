@@ -92,6 +92,7 @@ export function cameraFromFeatureProps(
     zone,
     purpose,
     imageUrl: (p.imageUrl as string) || undefined,
+    streamUrl: (p.streamUrl as string) || undefined,
     fovHalfAngle:
       typeof p.fovHalfAngle === "number"
         ? p.fovHalfAngle

@@ -51,6 +51,8 @@ export interface Camera {
   purpose: string;
   /** Absolute image URL if OSM has image / wikimedia_commons. */
   imageUrl?: string;
+  /** Live HLS (.m3u8) stream, for SCDOT 511 traffic cameras. */
+  streamUrl?: string;
   /** Approximate FOV half-angle in degrees (full cone = 2x). */
   fovHalfAngle: number;
   /** True if the user added this camera manually (stored on device). */

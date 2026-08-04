@@ -76,6 +76,7 @@ async function fetchSC511() {
       const p = f.properties ?? {};
       const [lon, lat] = f.geometry?.coordinates ?? [];
       if (lon == null || lat == null || p.active === false) continue;
+      if (p.problem_stream === true) continue;
       const dirRaw = String(p.direction ?? "").trim().toUpperCase();
       const bearing = DIR_TO_BEARING[dirRaw];
       const directions = bearing == null ? [] : [bearing];
@@ -95,6 +96,9 @@ async function fetchSC511() {
           zone: "traffic",
           purpose: `SCDOT live traffic camera${route ? ` — ${route.trim()}` : ""}`,
           imageUrl: typeof p.image_url === "string" ? p.image_url : null,
+          // Live HLS stream. SkyVDN serves these with Access-Control-Allow-
+          // Origin: *, so the browser can play them directly.
+          streamUrl: typeof p.https_url === "string" ? p.https_url : null,
           fovHalfAngle: 30,
         },
       });

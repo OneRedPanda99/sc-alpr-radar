@@ -472,11 +472,20 @@ body {
   height: 100%;
 }
 
-.live-cam img {
+.live-cam img,
+.live-cam video {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  background: #000;
+}
+
+/* A snapshot is not a live feed; label it honestly rather than showing a
+   pulsing LIVE dot over a picture that updates once every 30 seconds. */
+.live-cam-badge.still {
+  color: var(--muted);
+  letter-spacing: 0.1em;
 }
 
 .live-cam-badge {
