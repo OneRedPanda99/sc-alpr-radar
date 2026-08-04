@@ -4,9 +4,14 @@ import { saveCameras } from "@/services/storage";
 
 /**
  * Bump when the pack gains new kinds or fields. v2 added police stations and
- * gunshot detectors.
+ * gunshot detectors; v3 added live HLS stream URLs.
+ *
+ * Forgetting to bump this is a silent failure — the app keeps a cached pack
+ * that lacks the new field and quietly degrades — so `hydrate` also refreshes
+ * the bundle in the background whenever `generatedAt` differs. This constant
+ * is now just the fast path for a breaking change.
  */
-export const PACK_SCHEMA_VERSION = 2;
+export const PACK_SCHEMA_VERSION = 3;
 
 const OVERPASS_ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",

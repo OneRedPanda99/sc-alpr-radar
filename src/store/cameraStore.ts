@@ -18,7 +18,11 @@ import {
   fetchRadioSites,
   fetchWigleCandidates,
 } from "@/services/extraLayers";
-import { PACK_SCHEMA_VERSION, updateCameras } from "@/services/sync";
+import {
+  fetchBundledDataset,
+  PACK_SCHEMA_VERSION,
+  updateCameras,
+} from "@/services/sync";
 
 type Status = "idle" | "loading" | "ready" | "empty" | "error";
 
@@ -162,6 +166,35 @@ export const useCameraStore = create<CameraState>((set, get) => ({
       );
 
       void get().refreshIncidents();
+
+      // Self-healing pack refresh. Bumping PACK_SCHEMA_VERSION above catches
+      // breaking changes, but forgetting to bump it is silent: the app keeps a
+      // cached pack missing the new field and quietly degrades (this is exactly
+      // how live stream URLs failed to reach anyone). So whenever the bundle's
+      // generatedAt differs from the cached one, take the bundle.
+      void fetchBundledDataset()
+        .then(async (bundled) => {
+          const current = get().pack;
+          if (!current || bundled.generatedAt === current.generatedAt) return;
+          bundled.syncedAt = new Date().toISOString();
+          await saveCameras(bundled);
+          const next = combine(
+            bundled,
+            get().community,
+            get().custom,
+            get().extra,
+            get().incidents,
+          );
+          set({
+            pack: bundled,
+            dataset: next,
+            grid: new CameraGrid(next.cameras),
+            status: next.count > 0 ? "ready" : "empty",
+          });
+        })
+        .catch(() => {
+          // Offline or the bundle is unreachable; the cached pack is fine.
+        });
 
       // Refresh the shared community dataset in the background (non-blocking).
       // Prefer tip-of-main sources so newly approved cameras appear without a
