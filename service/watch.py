@@ -66,6 +66,10 @@ class Watcher:
         self.tracks: dict[tuple[str, int], Track] = {}
         # Confirmed hits, keyed the same way, aged out by DETECTION_TTL_S.
         self.hits: dict[str, dict] = {}
+        # Rolling window of raw CLIP scores. Without this, a run where nothing
+        # clears POLICE_THRESHOLD is indistinguishable from a broken pipeline —
+        # you get an empty file either way and no idea which.
+        self.recent_scores: deque[float] = deque(maxlen=400)
         self.running = True
 
         config.OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -160,6 +164,7 @@ class Watcher:
             # Keep the strongest look at this vehicle; a single bad frame
             # (occluded, motion-blurred) shouldn't erase a confident read.
             track.appearance = max(track.appearance, score)
+            self.recent_scores.append(score)
 
     # -------------------------------------------------------------- publish --
 
@@ -227,11 +232,23 @@ class Watcher:
     def _report(self) -> None:
         live = sum(1 for r in self.readers.values() if r.latest() is not None)
         restarts = sum(r.restarts for r in self.readers.values())
-        print(
+        line = (
             f"[{time.strftime('%H:%M:%S')}] streams {live}/{len(self.readers)} "
             f"| tracks {len(self.tracks)} | hits {len(self.hits)} "
             f"| restarts {restarts}"
         )
+        if self.recent_scores:
+            ranked = sorted(self.recent_scores, reverse=True)
+            top = ranked[0]
+            p90 = ranked[max(0, int(len(ranked) * 0.1) - 1)]
+            median = ranked[len(ranked) // 2]
+            # The gap between top and median is what decides the threshold: if
+            # they're close, CLIP isn't separating cruisers from traffic at all.
+            line += (
+                f" | score top {top:.2f} p90 {p90:.2f} med {median:.2f}"
+                f" (thr {config.POLICE_THRESHOLD})"
+            )
+        print(line, flush=True)
 
     # ---------------------------------------------------------------- probe --
 
