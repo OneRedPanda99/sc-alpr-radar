@@ -98,7 +98,15 @@ POLICE_THRESHOLD = 0.85
 
 OUT_DIR = ROOT / "out"
 DETECTIONS_JSON = OUT_DIR / "detections.json"
+
+# Every large vehicle, for labelling. Mostly ordinary traffic by design — this
+# is the training set, not a result.
 CROP_DIR = OUT_DIR / "crops"
+
+# Only vehicles that actually cleared POLICE_THRESHOLD. Browse this one to see
+# what the detector claims; browsing `crops` and finding semis reads as a wall
+# of false positives when they are in fact correctly-rejected negatives.
+HIT_DIR = OUT_DIR / "hits"
 
 # Keep a detection on the map this long after it was last seen.
 DETECTION_TTL_S = 180

@@ -78,6 +78,7 @@ class Watcher:
         config.OUT_DIR.mkdir(parents=True, exist_ok=True)
         if save_crops:
             config.CROP_DIR.mkdir(parents=True, exist_ok=True)
+        config.HIT_DIR.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------ run --
 
@@ -259,11 +260,16 @@ class Watcher:
         this directory by name puts the highest scores first.
         """
         score = int(round(track.police_score * 100))
-        name = f"{score:03d}_{cam_id.replace('/', '_')}_{tid}.jpg"
+        # Class in the name so semis can be filtered at a glance: a police
+        # vehicle is a car or SUV, never an articulated truck.
+        name = f"{score:03d}_{track.cls_name}_{cam_id.replace('/', '_')}_{tid}.jpg"
         path = config.CROP_DIR / name
-        if path.exists():
-            return
-        cv2.imwrite(str(path), track.best_crop)
+        if not path.exists():
+            cv2.imwrite(str(path), track.best_crop)
+        if track.police_score >= config.POLICE_THRESHOLD:
+            hit = config.HIT_DIR / name
+            if not hit.exists():
+                cv2.imwrite(str(hit), track.best_crop)
 
     def _report(self) -> None:
         live = sum(1 for r in self.readers.values() if r.latest() is not None)

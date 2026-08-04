@@ -276,6 +276,10 @@ class Handler(BaseHTTPRequestHandler):
             # Highest-scoring first: if the detector works at all, the cruisers
             # are near the top, so the useful labels come early.
             queue = [f for f in reversed(crop_files()) if f not in labels]
+            # Skip articulated trucks and buses. A police vehicle is a car or
+            # SUV, so labelling semis costs attention and teaches nothing.
+            # Older crops have no class in the name and are kept.
+            queue = [f for f in queue if "_truck_" not in f and "_bus_" not in f]
             body = json.dumps({"queue": queue, "labelled": len(labels)})
             self._send(200, body.encode(), "application/json")
         elif self.path.startswith("/crop/"):
