@@ -39,6 +39,12 @@ export default defineConfig({
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,
+        // Do NOT let the precached index.html answer navigations. It pins the
+        // asset hashes from the build that installed it, so a new deploy sits
+        // on the server while the old bundle keeps running — and any in-app fix
+        // for that ships inside the bundle nobody can reach. The NetworkFirst
+        // rule below serves index.html instead, falling back to cache offline.
+        navigateFallback: undefined,
         // NOTE: geojson is intentionally excluded from precache. It is large and
         // served by a CDN that can briefly 503 right after a deploy; a failed
         // precache would abort the whole service-worker install. It is cached at
@@ -46,6 +52,18 @@ export default defineConfig({
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
         // Camera data + basemap tiles: cache-first so drives work offline.
         runtimeCaching: [
+          {
+            // The app shell itself. NetworkFirst means a deploy is live on the
+            // next launch instead of whenever the browser happens to notice a
+            // new service worker; the cache fallback keeps offline working.
+            urlPattern: ({ request }) => request.mode === "navigate",
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "app-shell",
+              networkTimeoutSeconds: 4,
+              cacheableResponse: { statuses: [200] },
+            },
+          },
           {
             // Every data layer, not just the camera pack — radio sites and
             // WiGLE candidates must survive offline too, or they silently

@@ -4,6 +4,33 @@ import { useCameraStore } from "@/store/cameraStore";
 import { ALERT_SOUNDS, playAlert, unlockAudio } from "@/services/alertEngine";
 import type { AlertSoundId } from "@/types";
 
+/**
+ * Nuclear option for a wedged install: drop the service worker and every cache,
+ * then reload from the server.
+ *
+ * This exists because a stale precached app shell can pin the old bundle
+ * indefinitely, and every in-app fix for that ships *inside* the bundle you
+ * can't reach. IndexedDB is left alone on purpose — that's where cameras you
+ * added yourself live, and they're not recoverable from the server.
+ */
+async function hardReset(): Promise<void> {
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } finally {
+    // Cache-bust the navigation itself so we can't be handed the old shell.
+    window.location.replace(
+      `${window.location.pathname}?fresh=${Date.now()}`,
+    );
+  }
+}
+
 export function SettingsMode() {
   const s = useSettingsStore();
   const { dataset, refresh, updating, error, status } = useCameraStore();
@@ -266,6 +293,15 @@ export function SettingsMode() {
         <p className="tip">
           Update while on Wi-Fi at home or work. Drive alerts then work fully
           offline.
+        </p>
+
+        <button className="test-btn" onClick={hardReset}>
+          Force update (clear cache &amp; reload)
+        </button>
+        <p className="tip">
+          Use if the app looks stuck on old data or an old layout. Unregisters
+          the offline worker, clears every cache, and reloads from the server.
+          Cameras you added yourself are kept.
         </p>
       </section>
 
