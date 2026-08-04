@@ -34,7 +34,7 @@ def pick_device() -> str:
 
 
 class Watcher:
-    def __init__(self, camera_limit: int, save_crops: bool):
+    def __init__(self, camera_limit: int, save_crops: bool, load_appearance: bool = True):
         self.device = pick_device()
         print(f"device: {self.device}")
         if self.device == "cuda":
@@ -45,8 +45,21 @@ class Watcher:
               f"(~{len(self.cameras) * 284 / 1000:.1f} Mbps)")
 
         self.readers = {c.id: StreamReader(c) for c in self.cameras}
+
+        print("loading detector ...", flush=True)
         self.detector = VehicleDetector(self.device)
-        self.appearance = PoliceAppearance(self.device)
+
+        # Skipped for --probe: the probe only needs detection, and pulling a
+        # ~600 MB CLIP checkpoint just to count vehicles makes the first run
+        # look like it has hung.
+        self.appearance = None
+        if load_appearance:
+            print(
+                "loading CLIP (first run downloads ~600 MB, be patient) ...",
+                flush=True,
+            )
+            self.appearance = PoliceAppearance(self.device)
+
         self.save_crops = save_crops
 
         # (camera_id, track_id) -> Track
@@ -62,6 +75,7 @@ class Watcher:
     # ------------------------------------------------------------------ run --
 
     def start(self) -> None:
+        print("connecting streams ...", flush=True)
         for r in self.readers.values():
             r.start()
         # Streams need a moment to negotiate before any frame exists.
@@ -137,7 +151,7 @@ class Watcher:
 
     def _score_appearance(self, pending) -> None:
         """One batched CLIP pass per sweep, rather than per track."""
-        if not pending:
+        if not pending or self.appearance is None:
             return
         # Cap the batch so a busy sweep can't stall the loop.
         pending = pending[:64]
@@ -250,7 +264,11 @@ def main() -> None:
     ap.add_argument("--no-crops", action="store_true", help="don't save training crops")
     args = ap.parse_args()
 
-    w = Watcher(args.cameras, save_crops=not args.no_crops)
+    w = Watcher(
+        args.cameras,
+        save_crops=not args.no_crops,
+        load_appearance=not args.probe,
+    )
     signal.signal(signal.SIGINT, w.stop)
     w.start()
 
