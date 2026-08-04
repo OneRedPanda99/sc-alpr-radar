@@ -98,41 +98,60 @@ class PoliceAppearance:
 def strobe_score(history: deque[np.ndarray]) -> float:
     """How strongly a crop sequence looks like flashing emergency lights.
 
-    Looks for saturated red and blue pixels whose *coverage varies over time*.
-    A car with red tail lights has a steady red fraction; a light bar makes that
-    fraction swing hard between frames. Variation is the signal, not colour.
+    Measured against real traffic, the previous version scored >0.6 on 15 of 29
+    vehicles — brake lights swinging red as cars slowed, plus compression noise
+    in small crops. Three changes tighten it:
+
+    * **Roof band only.** Light bars sit on top; brake lights don't. Only the
+      upper 45% of the crop is examined, which removes the single largest
+      source of false positives.
+    * **Red AND blue required.** A single swinging colour is brake lights or a
+      turn signal. Alternating red and blue is what almost nothing else does.
+    * **Alternation, not just variance.** Real strobes anti-correlate — red
+      peaks while blue troughs. Flicker that moves both together is noise.
     """
-    if len(history) < 6:
+    if len(history) < 8:
         return 0.0
 
     reds: list[float] = []
     blues: list[float] = []
     for crop in history:
-        if crop.size == 0:
+        if crop.size == 0 or crop.shape[0] < 8:
             continue
-        b = crop[:, :, 0].astype(np.int16)
-        g = crop[:, :, 1].astype(np.int16)
-        r = crop[:, :, 2].astype(np.int16)
-        n = crop.shape[0] * crop.shape[1]
-        # Dominant-and-bright, so ordinary paint doesn't register.
-        reds.append(float(np.count_nonzero((r > 140) & (r - g > 55) & (r - b > 45))) / n)
-        blues.append(float(np.count_nonzero((b > 140) & (b - g > 45) & (b - r > 55))) / n)
+        roof = crop[: max(1, int(crop.shape[0] * 0.45)), :, :]
+        b = roof[:, :, 0].astype(np.int16)
+        g = roof[:, :, 1].astype(np.int16)
+        r = roof[:, :, 2].astype(np.int16)
+        n = roof.shape[0] * roof.shape[1]
+        if n == 0:
+            continue
+        reds.append(float(np.count_nonzero((r > 150) & (r - g > 60) & (r - b > 50))) / n)
+        blues.append(float(np.count_nonzero((b > 150) & (b - g > 50) & (b - r > 60))) / n)
 
-    if len(reds) < 6:
+    if len(reds) < 8:
         return 0.0
 
-    def swing(vals: list[float]) -> float:
-        arr = np.array(vals)
-        if arr.max() < 0.004:  # never enough coloured pixels to matter
-            return 0.0
-        # Normalised spread: a steady light scores ~0, a strobe approaches 1.
+    r_arr, b_arr = np.array(reds), np.array(blues)
+    # Both colours must actually be present somewhere in the sequence.
+    if r_arr.max() < 0.01 or b_arr.max() < 0.01:
+        return 0.0
+
+    def swing(arr: np.ndarray) -> float:
         return float(min(1.0, (arr.max() - arr.min()) / (arr.max() + 1e-6)))
 
-    r_sw, b_sw = swing(reds), swing(blues)
-    both = min(r_sw, b_sw)
-    # Alternating red *and* blue is the strongest tell; a single colour still
-    # counts but is discounted, since brake lights alone can swing red.
-    return float(min(1.0, max(both * 1.15, max(r_sw, b_sw) * 0.7)))
+    r_sw, b_sw = swing(r_arr), swing(b_arr)
+    if min(r_sw, b_sw) < 0.4:
+        return 0.0
+
+    # Anti-correlation: -1 means red and blue alternate perfectly.
+    if r_arr.std() < 1e-9 or b_arr.std() < 1e-9:
+        return 0.0
+    corr = float(np.corrcoef(r_arr, b_arr)[0, 1])
+    if not np.isfinite(corr):
+        return 0.0
+    alternation = max(0.0, -corr)
+
+    return float(min(1.0, min(r_sw, b_sw) * (0.5 + 0.5 * alternation)))
 
 
 # ------------------------------------------------------------------ tracks ---

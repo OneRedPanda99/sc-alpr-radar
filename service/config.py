@@ -48,7 +48,13 @@ VEHICLE_CLASSES = {2: "car", 5: "bus", 7: "truck"}
 
 # Narrower than this and there aren't enough pixels to classify. Detection
 # still works out to the horizon; "is it a cruiser" does not.
-MIN_BOX_W = 60
+#
+# Raised from 60 after inspecting real output: at ~80px the top-scoring crops
+# were a white sedan and two grey SUVs, i.e. CLIP was ranking ordinary traffic.
+# 130 restricts scoring to the closest band of the frame, which is the only
+# place there are enough pixels for a light bar to be visible at all. It also
+# cuts the sample rate hard — few vehicles get that close to the camera.
+MIN_BOX_W = 130
 
 # ------------------------------------------------------------ police score --
 
