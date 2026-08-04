@@ -84,15 +84,15 @@ SCORE_GAIN = 30.0
 
 # Above this, call it a police vehicle.
 #
-# Measured against 3 labelled cruisers and 47 ordinary cars: AUC 0.80, means
-# 0.767 vs 0.591. The Youden-optimal 0.72 catches all three but flags 32% of
-# ordinary traffic, which on a highway is hundreds of false alarms an hour.
-# 0.85 is deliberately stricter — it will miss cruisers, but the hits it does
-# publish are worth looking at, and crops keep harvesting regardless so the
-# labelled set grows either way.
-#
-# Revisit once ~20 cruisers are labelled; three is not enough to tune against.
-POLICE_THRESHOLD = 0.85
+# 0.72 is the Youden-optimal point measured over 5 cruisers and 91 ordinary
+# cars: catches ~80% of cruisers, flags ~22% of ordinary traffic. That is a lot
+# of false alarms, chosen deliberately — a missed cruiser is worse than a
+# spurious one for this use, and every alarm is also a labelling opportunity.
+POLICE_THRESHOLD = 0.72
+
+# Trained linear probe over CLIP embeddings, written by train.py. When present
+# it replaces the zero-shot prompt scoring, which tops out around AUC 0.79.
+PROBE_PATH = ROOT / "out" / "probe.pt"
 
 # ----------------------------------------------------------------- output ---
 

@@ -51,6 +51,25 @@ class PoliceAppearance:
             feats = self.model.encode_text(tokens)
             self.text_feats = feats / feats.norm(dim=-1, keepdim=True)
 
+        # A probe trained on real labelled crops beats prompt comparison, since
+        # it learns what a cruiser looks like on these specific cameras rather
+        # than how well the image matches an English sentence.
+        self.probe = None
+        if config.PROBE_PATH.exists():
+            blob = torch.load(config.PROBE_PATH, map_location=device)
+            layer = torch.nn.Linear(blob["weight"].shape[1], 1).to(device)
+            with torch.no_grad():
+                layer.weight.copy_(blob["weight"].to(device))
+                layer.bias.copy_(blob["bias"].to(device))
+            layer.eval()
+            self.probe = layer
+            print(
+                f"using trained probe "
+                f"({blob.get('n_police', '?')} cruisers, "
+                f"cv AUC {blob.get('cv_auc', float('nan')):.3f})",
+                flush=True,
+            )
+
     @torch.no_grad()
     def score_batch(self, crops: list[np.ndarray]) -> list[float]:
         """Police-likeness per crop, 0-1. Crops are BGR, as ffmpeg gives them.
@@ -80,6 +99,9 @@ class PoliceAppearance:
 
         feats = self.model.encode_image(batch)
         feats = feats / feats.norm(dim=-1, keepdim=True)
+
+        if self.probe is not None:
+            return torch.sigmoid(self.probe(feats).squeeze(-1)).tolist()
 
         sims = feats @ self.text_feats.T          # cosine, roughly -1..1
         police = sims[:, : self.n_police].max(dim=-1).values
