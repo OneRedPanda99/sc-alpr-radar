@@ -53,7 +53,20 @@ class PoliceAppearance:
 
     @torch.no_grad()
     def score_batch(self, crops: list[np.ndarray]) -> list[float]:
-        """P(police) per crop. Crops are BGR, as they come off ffmpeg."""
+        """Police-likeness per crop, 0-1. Crops are BGR, as ffmpeg gives them.
+
+        Scored as the *margin* between the best police prompt and the best
+        civilian one, squashed through a sigmoid — not a softmax at CLIP's
+        standard 100x logit scale.
+
+        That scale assumes well-separated classes. Here every prompt describes
+        some kind of road vehicle, so their embeddings sit very close together
+        and a 100x multiplier turns hundredth-of-a-point differences into 0.00
+        or 1.00. Measured live, that produced a p90 of 0.95+ — around a tenth of
+        all passing traffic reading as a patrol car — with the median flipping
+        between 0.97 and 0.01 report to report. That's saturation noise, not
+        classification.
+        """
         if not crops:
             return []
         from PIL import Image
@@ -67,9 +80,16 @@ class PoliceAppearance:
 
         feats = self.model.encode_image(batch)
         feats = feats / feats.norm(dim=-1, keepdim=True)
-        # 100.0 is CLIP's standard logit scale; without it the softmax is flat.
-        probs = (100.0 * feats @ self.text_feats.T).softmax(dim=-1)
-        return probs[:, : self.n_police].sum(dim=-1).tolist()
+
+        sims = feats @ self.text_feats.T          # cosine, roughly -1..1
+        police = sims[:, : self.n_police].max(dim=-1).values
+        civilian = sims[:, self.n_police :].max(dim=-1).values
+
+        # Cosine margins between near-identical prompts land around ±0.05, so
+        # the gain has to be large enough to spread that across a usable range
+        # without pinning everything to the ends.
+        margin = police - civilian
+        return torch.sigmoid(margin * config.SCORE_GAIN).tolist()
 
 
 # ------------------------------------------------------------------ strobe --

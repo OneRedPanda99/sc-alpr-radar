@@ -202,6 +202,11 @@ class Watcher:
                     "firstSeen", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(track.first_seen))
                 ),
                 "lastSeen": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(track.last_seen)),
+                # Epoch seconds alongside the display string. Ageing used to
+                # re-parse `lastSeen` with mktime, which reads a UTC string as
+                # local time — so every hit was deleted the instant it was
+                # added, and `hits` sat at 0 no matter how high the scores got.
+                "_lastSeenEpoch": track.last_seen,
             }
 
             if self.save_crops and track.best_crop is not None:
@@ -213,17 +218,19 @@ class Watcher:
         # Age out hits so one car doesn't leave a permanent dot.
         cutoff = time.time() - config.DETECTION_TTL_S
         for hid, hit in list(self.hits.items()):
-            seen = time.mktime(time.strptime(hit["lastSeen"], "%Y-%m-%dT%H:%M:%SZ"))
-            if seen - time.timezone < cutoff:
+            if hit["_lastSeenEpoch"] < cutoff:
                 del self.hits[hid]
 
         payload = {
             "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "cameras": len(self.cameras),
             "count": len(self.hits),
-            "detections": sorted(
-                self.hits.values(), key=lambda h: h["score"], reverse=True
-            ),
+            "detections": [
+                {k: v for k, v in h.items() if not k.startswith("_")}
+                for h in sorted(
+                    self.hits.values(), key=lambda h: h["score"], reverse=True
+                )
+            ],
         }
         tmp = config.DETECTIONS_JSON.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, indent=1), encoding="utf-8")

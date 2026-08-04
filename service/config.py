@@ -71,7 +71,14 @@ CIVILIAN_PROMPTS = [
     "an empty road",
 ]
 
-# Above this, call it a police vehicle.
+# Sigmoid gain applied to the police-vs-civilian cosine margin. Margins between
+# near-identical prompts are small (order ±0.05), so this spreads them across a
+# usable range. Raise it for a sharper decision, lower it for a softer one.
+SCORE_GAIN = 30.0
+
+# Above this, call it a police vehicle. Tune against the score distribution the
+# watcher prints, not by guessing — the previous 0.62 was meaningless once the
+# scores turned out to be saturated.
 POLICE_THRESHOLD = 0.62
 
 # ----------------------------------------------------------------- output ---
