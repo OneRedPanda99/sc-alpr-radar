@@ -16,7 +16,7 @@ const INCIDENT_SYMBOLS: [RegExp, string][] = [
   [/object|debris/i, "⚠️"],
   [/fog|weather|ice|snow|flood/i, "🌫️"],
   [/animal/i, "🦌"],
-  [/police/i, "🚓"],
+  [/police/i, "🚨"],
   [/fire/i, "🔥"],
 ];
 
@@ -35,8 +35,10 @@ export function mapSymbol(camera: Camera): string | null {
         : /helicopter/i.test(camera.rawBrand ?? "")
           ? "🚁"
           : "✈️";
+    // 🚓 is a car shape first and a police car second, so at 18px on a map it
+    // just reads as "car". 🚨 is unmistakable at that size.
     case "police":
-      return "🚓";
+      return "🚨";
     case "gunshot":
       return "🔊";
     default:
@@ -72,7 +74,7 @@ export function aimBearingFor(camera: Camera): number | null {
 
 /** Every glyph the map can draw, so they can be pre-rasterised on load. */
 export const ALL_SYMBOLS: string[] = [
-  ...new Set([...INCIDENT_SYMBOLS.map(([, s]) => s), "❗", "🚁", "✈️", "🚓", "🔊"]),
+  ...new Set([...INCIDENT_SYMBOLS.map(([, s]) => s), "❗", "🚁", "✈️", "🚨", "🔊"]),
 ];
 
 /**
