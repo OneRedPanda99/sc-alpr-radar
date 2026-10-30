@@ -8,10 +8,46 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <!-- Fonts used to come in via a CSS @import, which blocked first paint
+         until Google answered (forever, offline). media=print + onload loads
+         them without blocking; system fonts show until they arrive. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin />
+    <link
+      rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&family=JetBrains+Mono:wght@500;700&display=swap"
+    />
     <title>SC ALPR Radar</title>
+    <style>
+      /* Boot splash: painted before any JS loads, replaced by React's first
+         render. Without it the phone shows a white flash, then a black void. */
+      html, body { margin: 0; background: #070b10; height: 100%; }
+      .boot {
+        position: fixed; inset: 0; display: grid; place-items: center;
+        color: #7d8aa0; font: 600 13px/1.4 system-ui, sans-serif;
+      }
+      .boot-inner { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+      .boot-ring {
+        width: 44px; height: 44px; border-radius: 50%;
+        border: 3px solid rgba(22, 224, 184, 0.16); border-top-color: #16e0b8;
+        animation: boot-spin 0.9s linear infinite;
+      }
+      @keyframes boot-spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .boot-ring { animation-duration: 3s; } }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot" role="status">
+        <div class="boot-inner">
+          <div class="boot-ring"></div>
+          <div>Loading SC ALPR Radar</div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

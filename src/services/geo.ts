@@ -10,6 +10,72 @@ export const FEET_PER_METER = 3.28084;
 export const feetToMeters = (ft: number) => ft / FEET_PER_METER;
 export const metersToFeet = (m: number) => m * FEET_PER_METER;
 
+/**
+ * Read coordinates out of whatever someone pastes: "34.0007, -81.0348",
+ * "34.0007 -81.0348", "N34.0007 W81.0348", "34°00'02.5"N 81°02'05.3"W", or a
+ * Google / Apple / OpenStreetMap link. Returns null for anything else, so the
+ * caller can fall through to an address search.
+ *
+ * Two bare numbers are read lat-then-lon, which is how every maps app copies
+ * them. In South Carolina longitude is always negative, so a pair that only
+ * makes sense swapped (e.g. "-81.03, 34.00") is swapped back.
+ */
+export function parseCoordinates(input: string): LatLng | null {
+  const raw = input.trim();
+  if (!raw) return null;
+
+  // Map links: @lat,lon (Google), ?q=lat,lon / ll= (Apple/Google), #map=z/lat/lon (OSM).
+  const link =
+    /@(-?\d+\.\d+),(-?\d+\.\d+)/.exec(raw) ??
+    /[?&](?:q|ll|query|destination)=(-?\d+\.\d+)(?:,|%2C)\s*(-?\d+\.\d+)/i.exec(raw) ??
+    /#map=\d+(?:\.\d+)?\/(-?\d+\.\d+)\/(-?\d+\.\d+)/.exec(raw);
+  if (link) return valid(+link[1], +link[2]);
+
+  // Degrees / minutes / seconds with hemisphere letters.
+  const dms = [
+    ...raw.matchAll(
+      /([NSEW])?\s*(\d{1,3}(?:\.\d+)?)\s*°\s*(?:(\d{1,2}(?:\.\d+)?)\s*['′]\s*)?(?:(\d{1,2}(?:\.\d+)?)\s*(?:"|″|''))?\s*([NSEW])?/gi,
+    ),
+  ].filter((m) => m[2] != null);
+  if (dms.length === 2) {
+    const vals = dms.map((m) => {
+      const hemi = (m[1] ?? m[5] ?? "").toUpperCase();
+      let v = +m[2] + (m[3] ? +m[3] / 60 : 0) + (m[4] ? +m[4] / 3600 : 0);
+      if (hemi === "S" || hemi === "W") v = -v;
+      return { v, hemi };
+    });
+    const latFirst = !(vals[0].hemi === "E" || vals[0].hemi === "W");
+    const [a, b] = latFirst ? vals : [vals[1], vals[0]];
+    return valid(a.v, b.v);
+  }
+
+  // Decimal pair, optionally with hemisphere letters.
+  const dec =
+    /^([NS])?\s*(-?\d{1,3}(?:\.\d+)?)\s*([NS])?\s*[,;\s]\s*([EW])?\s*(-?\d{1,3}(?:\.\d+)?)\s*([EW])?$/i.exec(
+      raw,
+    );
+  if (dec) {
+    let lat = +dec[2];
+    let lon = +dec[5];
+    if (/s/i.test(dec[1] ?? dec[3] ?? "")) lat = -Math.abs(lat);
+    if (/w/i.test(dec[4] ?? dec[6] ?? "")) lon = -Math.abs(lon);
+    const hasHemi = !!(dec[1] ?? dec[3] ?? dec[4] ?? dec[6]);
+    if (!hasHemi && Math.abs(lat) > 90 && Math.abs(lon) <= 90) [lat, lon] = [lon, lat];
+    if (!hasHemi && lat < 0 && lon > 0 && Math.abs(lat) > Math.abs(lon)) [lat, lon] = [lon, lat];
+    // Plain decimal numbers need at least one decimal place each, so a
+    // street number pair like "12 34" isn't read as a location.
+    if (!hasHemi && !(/\./.test(dec[2]) && /\./.test(dec[5]))) return null;
+    return valid(lat, lon);
+  }
+  return null;
+}
+
+function valid(lat: number, lon: number): LatLng | null {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return { lat, lon };
+}
+
 const EARTH_RADIUS_M = 6371008.8;
 const toRad = (deg: number) => (deg * Math.PI) / 180;
 const toDeg = (rad: number) => (rad * 180) / Math.PI;

@@ -1,8 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Camera, LatLng } from "@/types";
 import { cameraColor } from "@/services/brand";
+import {
+  fetchOsmDetails,
+  FRIENDLY_TAGS,
+  OSM_CATEGORY_BY_ID,
+  type Bbox,
+} from "@/services/osmDetails";
 import { fovConePolygon } from "@/services/geo";
 import {
   aimBearingFor,
@@ -42,6 +48,39 @@ interface MapViewProps {
   onReady?: (map: maplibregl.Map) => void;
   /** Turn the map to this bearing. Bumping the token re-triggers the turn. */
   aimBearing?: { bearing: number; token: number } | null;
+  /** Other candidate routes (Plan B/C, the fastest alternative), drawn faint. */
+  altRoutes?: { coordinates: [number, number][]; color?: string }[];
+  /** Colour of the main route line. */
+  routeColor?: string;
+  /** Numbered pins for a plan's start, stops and destination. */
+  stops?: MapStop[];
+  /** Bump to fly back to `center`. */
+  recenterToken?: number;
+  /** Extra padding when fitting a route, e.g. for a sheet covering the map. */
+  fitPadding?: { top: number; bottom: number; left: number; right: number };
+  /** Enabled OpenStreetMap detail categories. */
+  osmLayers?: string[];
+  /** Fly to a place and mark it with a pin; bump the token to fly again. */
+  lookAt?: { point: LatLng; token: number } | null;
+  /** Long-press (touch) or right-click: "what's here?" at that spot. */
+  onLongPress?: (point: LatLng) => void;
+}
+
+export interface MapStop {
+  id: string;
+  point: LatLng;
+  label: string;
+  role: "start" | "stop" | "end";
+  checkpoint?: boolean;
+  /** Text inside the pin (A, 1, 2, B…). */
+  badge: string;
+}
+
+interface OsmPick {
+  osmType: string;
+  osmId: number;
+  category: string;
+  tags: Record<string, string>;
 }
 
 const CAMERA_SOURCE = "cameras";
@@ -50,6 +89,12 @@ const SYMBOL_SOURCE = "symbols";
 const SYMBOL_LAYER = "symbol-glyphs";
 const ROUTE_SOURCE = "route";
 const ROUTE_CASING = "route-casing";
+const ALT_SOURCE = "route-alt";
+const OSM_POINTS = "osm-points";
+const OSM_LINES = "osm-lines";
+const OSM_LINE_LABELS = "osm-line-labels";
+/** Half-size of the box a tap searches for the nearest camera. */
+const TAP_SLOP_PX = 16;
 
 const EMPTY_FC: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -165,7 +210,30 @@ export function MapView({
   onMapClick,
   onReady,
   aimBearing,
+  altRoutes,
+  routeColor = "#16e0b8",
+  stops,
+  recenterToken,
+  fitPadding,
+  osmLayers,
+  lookAt,
+  onLongPress,
 }: MapViewProps) {
+  const lookMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const onLongPressRef = useRef(onLongPress);
+  onLongPressRef.current = onLongPress;
+  // Tiles drawn at least once: until then a skeleton covers the canvas, so
+  // the map fades in instead of popping in square by square.
+  const [painted, setPainted] = useState(false);
+  const [osmPick, setOsmPick] = useState<OsmPick | null>(null);
+  const [osmStatus, setOsmStatus] = useState<{
+    loading: boolean;
+    needZoom: string[];
+    error: string | null;
+  }>({ loading: false, needZoom: [], error: null });
+  const stopMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const fitPaddingRef = useRef(fitPadding);
+  fitPaddingRef.current = fitPadding;
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
@@ -194,6 +262,9 @@ export function MapView({
       attributionControl: { compact: true },
     });
     mapRef.current = map;
+    map.once("idle", () => setPainted(true));
+    // Never leave the skeleton up forever on a dead connection.
+    const paintTimer = setTimeout(() => setPainted(true), 6000);
 
     map.on("load", () => {
       map.addSource(SATELLITE_SOURCE, {
@@ -232,6 +303,60 @@ export function MapView({
         },
       });
 
+      // OSM detail lines (speed limits) sit under the routes so a planned
+      // route is never hidden by road colouring.
+      map.addSource(OSM_LINES, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: OSM_LINES,
+        type: "line",
+        source: OSM_LINES,
+        layout: { "line-cap": "round" },
+        paint: {
+          "line-color": ["get", "color"],
+          "line-width": 3,
+          "line-opacity": 0.55,
+        },
+      });
+      // Reuse whatever font the basemap ships, so labels never request a
+      // glyph set the tile server doesn't have.
+      const font = (map.getStyle().layers ?? [])
+        .map((l) => (l.layout as Record<string, unknown> | undefined)?.["text-font"])
+        .find((f): f is string[] => Array.isArray(f));
+      if (font) {
+        map.addLayer({
+          id: OSM_LINE_LABELS,
+          type: "symbol",
+          source: OSM_LINES,
+          minzoom: 14,
+          layout: {
+            "symbol-placement": "line",
+            "text-field": ["get", "label"],
+            "text-font": font,
+            "text-size": 12,
+            "symbol-spacing": 220,
+          },
+          paint: {
+            "text-color": "#ffffff",
+            "text-halo-color": "#4c1d95",
+            "text-halo-width": 2,
+          },
+        });
+      }
+
+      map.addSource(ALT_SOURCE, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "route-alt",
+        type: "line",
+        source: ALT_SOURCE,
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": ["coalesce", ["get", "color"], "#8a96aa"],
+          "line-width": 5,
+          "line-opacity": 0.45,
+          "line-dasharray": [1.5, 1.2],
+        },
+      });
+
       map.addSource(ROUTE_SOURCE, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: ROUTE_CASING,
@@ -240,8 +365,8 @@ export function MapView({
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": "#0b1220",
-          "line-width": 10,
-          "line-opacity": 0.35,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 8, 14, 12],
+          "line-opacity": 0.55,
         },
       });
       map.addLayer({
@@ -250,11 +375,62 @@ export function MapView({
         source: ROUTE_SOURCE,
         layout: { "line-cap": "round", "line-join": "round" },
         paint: {
-          "line-color": "#16e0b8",
-          "line-width": 6,
+          "line-color": routeColor,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 4.5, 14, 7],
           "line-opacity": 0.95,
         },
       });
+
+      map.addSource(OSM_POINTS, { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: OSM_POINTS,
+        type: "circle",
+        source: OSM_POINTS,
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 3, 16, 6],
+          "circle-color": ["get", "color"],
+          "circle-stroke-color": "#0b1220",
+          "circle-stroke-width": 1.5,
+          "circle-opacity": 0.9,
+        },
+      });
+      const pickOsm = (e: maplibregl.MapLayerMouseEvent) => {
+        if (placingRef.current) return;
+        // A camera under the tap wins: it's what people are here for.
+        const r = TAP_SLOP_PX;
+        const cams = map.queryRenderedFeatures(
+          [
+            [e.point.x - r, e.point.y - r],
+            [e.point.x + r, e.point.y + r],
+          ],
+          { layers: ["camera-dots", SYMBOL_LAYER].filter((l) => map.getLayer(l)) },
+        );
+        if (cams.length) return;
+        const p = e.features?.[0]?.properties;
+        if (!p) return;
+        let tags: Record<string, string> = {};
+        try {
+          tags = JSON.parse(String(p.tags));
+        } catch {
+          // keep empty
+        }
+        setOsmPick({
+          osmType: String(p.osmType),
+          osmId: Number(p.osmId),
+          category: String(p.category),
+          tags,
+        });
+      };
+      map.on("click", OSM_POINTS, pickOsm);
+      map.on("click", OSM_LINES, pickOsm);
+      for (const l of [OSM_POINTS, OSM_LINES]) {
+        map.on("mouseenter", l, () => {
+          map.getCanvas().style.cursor = "pointer";
+        });
+        map.on("mouseleave", l, () => {
+          map.getCanvas().style.cursor = "";
+        });
+      }
 
       map.addSource(CAMERA_SOURCE, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
@@ -262,11 +438,18 @@ export function MapView({
         type: "circle",
         source: CAMERA_SOURCE,
         paint: {
+          // Smaller at state scale, where ~5,000 dots otherwise bury every
+          // road (and any planned route) in solid colour.
           "circle-radius": [
-            "case",
-            ["boolean", ["get", "highlight"], false],
-            10,
-            5.5,
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            8,
+            ["case", ["boolean", ["get", "highlight"], false], 6, 2.5],
+            12,
+            ["case", ["boolean", ["get", "highlight"], false], 8, 4],
+            15,
+            ["case", ["boolean", ["get", "highlight"], false], 10, 6],
           ],
           // Unconfirmed RF sightings render hollow — a ring in the brand colour
           // with a near-transparent centre — so they read as "maybe" at a
@@ -321,6 +504,23 @@ export function MapView({
           ],
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
+        },
+      });
+
+      // Routes draw above the camera dots: along highways the traffic cams
+      // sit shoulder to shoulder and hid the route line completely. The
+      // cameras that are actually on the route are then redrawn on top.
+      for (const id of ["route-alt", ROUTE_CASING, "route-line"]) map.moveLayer(id);
+      map.addLayer({
+        id: "camera-dots-hl",
+        type: "circle",
+        source: CAMERA_SOURCE,
+        filter: ["==", ["get", "highlight"], true],
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 6, 12, 8, 15, 10],
+          "circle-color": ["get", "color"],
+          "circle-stroke-width": 3,
+          "circle-stroke-color": "#ffffff",
         },
       });
 
@@ -380,9 +580,56 @@ export function MapView({
 
       map.on("rotate", () => setBearing(map.getBearing()));
 
+      // Right-click on a laptop; on phones most browsers turn a long press on
+      // the canvas into the same contextmenu event.
+      map.on("contextmenu", (e) => {
+        e.preventDefault();
+        onLongPressRef.current?.({ lat: e.lngLat.lat, lon: e.lngLat.lng });
+      });
+      // Touch browsers don't reliably send contextmenu from the map canvas,
+      // so time a still, single-finger press ourselves.
+      let pressTimer: ReturnType<typeof setTimeout> | null = null;
+      const cancelPress = () => {
+        if (pressTimer) clearTimeout(pressTimer);
+        pressTimer = null;
+      };
+      map.on("touchstart", (e) => {
+        cancelPress();
+        if (e.originalEvent.touches.length !== 1) return;
+        const at = e.lngLat;
+        pressTimer = setTimeout(() => {
+          pressTimer = null;
+          onLongPressRef.current?.({ lat: at.lat, lon: at.lng });
+        }, 550);
+      });
+      map.on("touchmove", cancelPress);
+      map.on("touchend", cancelPress);
+      map.on("touchcancel", cancelPress);
+      map.on("movestart", cancelPress);
+
       map.on("click", (e) => {
-        if (!placingRef.current) return;
-        onMapClickRef.current?.({ lat: e.lngLat.lat, lon: e.lngLat.lng });
+        if (placingRef.current) {
+          onMapClickRef.current?.({ lat: e.lngLat.lat, lon: e.lngLat.lng });
+          return;
+        }
+        // Dots are ~10px; a fingertip is ~40. Treat a near miss as a tap on
+        // the closest camera instead of making people zoom in to hit one.
+        const r = TAP_SLOP_PX;
+        const hits = map.queryRenderedFeatures(
+          [
+            [e.point.x - r, e.point.y - r],
+            [e.point.x + r, e.point.y + r],
+          ],
+          { layers: ["camera-dots", SYMBOL_LAYER] },
+        );
+        let best: { id: string; d: number } | null = null;
+        for (const f of hits) {
+          if (f.geometry.type !== "Point" || f.properties?.id == null) continue;
+          const p = map.project(f.geometry.coordinates as [number, number]);
+          const d = Math.hypot(p.x - e.point.x, p.y - e.point.y);
+          if (!best || d < best.d) best = { id: String(f.properties.id), d };
+        }
+        if (best) onSelectCameraRef.current?.(best.id);
       });
       map.on("mouseenter", "camera-dots", () => {
         map.getCanvas().style.cursor = "pointer";
@@ -396,15 +643,182 @@ export function MapView({
     });
 
     if (import.meta.env.DEV) {
-      (window as unknown as Record<string, unknown>).__map = map;
+      const w = window as unknown as Record<string, unknown>;
+      w.__map = map;
+      w.__maps = [...((w.__maps as maplibregl.Map[] | undefined) ?? []), map];
     }
 
     return () => {
+      clearTimeout(paintTimer);
       map.remove();
       mapRef.current = null;
       setReady(false);
     };
   }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !map.getLayer("route-line")) return;
+    map.setPaintProperty("route-line", "line-color", routeColor);
+  }, [routeColor, ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const src = map.getSource(ALT_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    src?.setData({
+      type: "FeatureCollection",
+      features: (altRoutes ?? [])
+        .filter((r) => r.coordinates.length > 1)
+        .map((r) => ({
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: r.coordinates },
+          properties: r.color ? { color: r.color } : {},
+        })),
+    });
+  }, [altRoutes, ready]);
+
+  // Stop pins are DOM markers: they need a badge, a label and to sit above
+  // every layer, which is clumsy to do with symbol layers.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    for (const m of stopMarkersRef.current) m.remove();
+    stopMarkersRef.current = (stops ?? []).map((s) => {
+      const el = document.createElement("div");
+      el.className = `stop-pin stop-pin-${s.role}${s.checkpoint ? " stop-pin-check" : ""}`;
+      el.title = s.label;
+      const badge = document.createElement("span");
+      badge.textContent = s.badge;
+      el.appendChild(badge);
+      return new maplibregl.Marker({ element: el, anchor: "bottom" })
+        .setLngLat([s.point.lon, s.point.lat])
+        .addTo(map);
+    });
+  }, [stops, ready]);
+
+  useEffect(
+    () => () => {
+      for (const m of stopMarkersRef.current) m.remove();
+    },
+    [],
+  );
+
+  // --- OpenStreetMap detail layers -----------------------------------------
+  const osmKey = (osmLayers ?? []).slice().sort().join(",");
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const ids = osmKey ? osmKey.split(",") : [];
+    const pts = map.getSource(OSM_POINTS) as maplibregl.GeoJSONSource | undefined;
+    const lns = map.getSource(OSM_LINES) as maplibregl.GeoJSONSource | undefined;
+    if (!ids.length) {
+      pts?.setData(EMPTY_FC);
+      lns?.setData(EMPTY_FC);
+      setOsmStatus({ loading: false, needZoom: [], error: null });
+      return;
+    }
+
+    let ctrl: AbortController | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    // The box last fetched (padded), and which categories it holds.
+    let have: { bbox: Bbox; cats: string } | null = null;
+
+    const load = async () => {
+      const zoom = map.getZoom();
+      const cats = ids
+        .map((id) => OSM_CATEGORY_BY_ID.get(id))
+        .filter((c): c is NonNullable<typeof c> => !!c);
+      const usable = cats.filter((c) => zoom >= c.minZoom);
+      const needZoom = cats.filter((c) => zoom < c.minZoom).map((c) => c.label);
+      const b = map.getBounds();
+      const view: Bbox = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()];
+      const catsKey = usable.map((c) => c.id).join(",");
+      if (!usable.length) {
+        setOsmStatus({ loading: false, needZoom, error: null });
+        return;
+      }
+      if (
+        have &&
+        have.cats === catsKey &&
+        view[0] >= have.bbox[0] &&
+        view[1] >= have.bbox[1] &&
+        view[2] <= have.bbox[2] &&
+        view[3] <= have.bbox[3]
+      ) {
+        setOsmStatus((s) => ({ ...s, needZoom }));
+        return;
+      }
+      // Pad by half a screen so small pans don't refetch.
+      const dLat = (view[2] - view[0]) / 2;
+      const dLon = (view[3] - view[1]) / 2;
+      const padded: Bbox = [view[0] - dLat, view[1] - dLon, view[2] + dLat, view[3] + dLon];
+      ctrl?.abort();
+      ctrl = new AbortController();
+      setOsmStatus({ loading: true, needZoom, error: null });
+      try {
+        const fc = await fetchOsmDetails(usable, padded, ctrl.signal);
+        pts?.setData({
+          type: "FeatureCollection",
+          features: fc.features.filter((f) => f.geometry.type === "Point"),
+        });
+        lns?.setData({
+          type: "FeatureCollection",
+          features: fc.features.filter((f) => f.geometry.type === "LineString"),
+        });
+        have = { bbox: padded, cats: catsKey };
+        setOsmStatus({ loading: false, needZoom, error: null });
+      } catch (e) {
+        if ((e as Error).name === "AbortError") return;
+        setOsmStatus({
+          loading: false,
+          needZoom,
+          error: "Map details unavailable right now (OpenStreetMap is busy).",
+        });
+      }
+    };
+
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void load(), 650);
+    };
+    void load();
+    map.on("moveend", schedule);
+    return () => {
+      map.off("moveend", schedule);
+      if (timer) clearTimeout(timer);
+      ctrl?.abort();
+    };
+  }, [osmKey, ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    if (!lookAt) {
+      lookMarkerRef.current?.remove();
+      lookMarkerRef.current = null;
+      return;
+    }
+    const at: [number, number] = [lookAt.point.lon, lookAt.point.lat];
+    if (!lookMarkerRef.current) {
+      const el = document.createElement("div");
+      el.className = "look-pin";
+      lookMarkerRef.current = new maplibregl.Marker({ element: el, anchor: "bottom" });
+    }
+    lookMarkerRef.current.setLngLat(at).addTo(map);
+    map.flyTo({ center: at, zoom: Math.max(map.getZoom(), 16), duration: 1200, essential: true });
+  }, [lookAt, ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !recenterToken || !center) return;
+    map.easeTo({
+      center: [center.lon, center.lat],
+      zoom: Math.max(map.getZoom(), 15),
+      duration: 600,
+    });
+    // Only the token triggers this; plain center changes are handled below.
+  }, [recenterToken, ready]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -450,18 +864,32 @@ export function MapView({
     src.setData(routeToFC(routeLine ?? null));
 
     if (fitRoute && routeLine && routeLine.length > 1) {
-      const key = `${routeLine.length}:${routeLine[0]}:${routeLine[routeLine.length - 1]}`;
+      // Fit to every candidate line, keyed on all of them, so flipping between
+      // Plan A and B doesn't make the map lurch each time.
+      const lines = [routeLine, ...(altRoutes ?? []).map((r) => r.coordinates)]
+        .filter((l) => l.length > 1);
+      const key = lines
+        .map((l) => `${l.length}:${l[0]}:${l[l.length - 1]}`)
+        .sort()
+        .join("|");
       if (key !== lastFitKey.current) {
         lastFitKey.current = key;
         const bounds = new maplibregl.LngLatBounds(
           routeLine[0],
           routeLine[0],
         );
-        for (const c of routeLine) bounds.extend(c);
-        map.fitBounds(bounds, { padding: 56, duration: 700, maxZoom: 15 });
+        for (const l of lines) for (const c of l) bounds.extend(c);
+        const p = fitPaddingRef.current;
+        map.fitBounds(bounds, {
+          padding: p
+            ? { top: p.top + 40, bottom: p.bottom + 40, left: p.left + 40, right: p.right + 40 }
+            : 56,
+          duration: 700,
+          maxZoom: 15,
+        });
       }
     }
-  }, [routeLine, fitRoute, ready]);
+  }, [routeLine, altRoutes, fitRoute, ready]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -519,6 +947,25 @@ export function MapView({
   return (
     <div className="map-container">
       <div ref={containerRef} className="map-canvas" />
+      <div className={`map-skeleton ${painted ? "gone" : ""}`} aria-hidden="true">
+        <div className="map-skeleton-label">
+          <span className="spinner" /> Loading map
+        </div>
+      </div>
+      {(osmStatus.loading || osmStatus.needZoom.length > 0 || osmStatus.error) && (
+        <div className="osm-status" role="status">
+          {osmStatus.loading ? (
+            <>
+              <span className="spinner sm" /> Loading map details
+            </>
+          ) : osmStatus.error ? (
+            osmStatus.error
+          ) : (
+            `Zoom in to see ${osmStatus.needZoom.join(", ").toLowerCase()}`
+          )}
+        </div>
+      )}
+      {osmPick && <OsmInspector pick={osmPick} onClose={() => setOsmPick(null)} />}
       {/* Only appears once the map is actually turned — a permanently visible
           reset control on a north-up map is a button that does nothing. */}
       {Math.abs(bearing) > 0.5 && (
@@ -537,6 +984,68 @@ export function MapView({
           </svg>
         </button>
       )}
+    </div>
+  );
+}
+
+/** Every tag OpenStreetMap has for a tapped feature, friendliest first. */
+function OsmInspector({ pick, onClose }: { pick: OsmPick; onClose: () => void }) {
+  const cat = OSM_CATEGORY_BY_ID.get(pick.category);
+  const rows = useMemo(() => {
+    const entries = Object.entries(pick.tags);
+    const friendly = entries
+      .filter(([k]) => k in FRIENDLY_TAGS)
+      .map(([k, v]) => [FRIENDLY_TAGS[k], v] as const);
+    const rest = entries.filter(([k]) => !(k in FRIENDLY_TAGS) && k !== "name");
+    return { friendly, rest };
+  }, [pick]);
+  const title = pick.tags.name ?? pick.tags.ref ?? cat?.label ?? "Map feature";
+
+  return (
+    <div className="osm-inspector" role="dialog" aria-label={title}>
+      <div className="osm-inspector-head">
+        <span className="osm-swatch" style={{ background: cat?.color }} />
+        <div className="osm-inspector-title">
+          <strong>{title}</strong>
+          <span>{cat?.label}</span>
+        </div>
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
+      </div>
+      {rows.friendly.length > 0 && (
+        <dl className="osm-friendly">
+          {rows.friendly
+            .filter(([label]) => label !== "Name")
+            .map(([label, v]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{v}</dd>
+              </div>
+            ))}
+        </dl>
+      )}
+      <details className="osm-raw">
+        <summary>All OpenStreetMap tags ({rows.rest.length})</summary>
+        <table>
+          <tbody>
+            {rows.rest.map(([k, v]) => (
+              <tr key={k}>
+                <th>{k}</th>
+                <td>{v}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+      <a
+        className="osm-link"
+        href={`https://www.openstreetmap.org/${pick.osmType}/${pick.osmId}`}
+        target="_blank"
+        rel="noreferrer"
+      >
+        Open on openstreetmap.org
+      </a>
     </div>
   );
 }

@@ -136,6 +136,61 @@ export interface SavedRoute {
   steps: RouteStep[];
 }
 
+/** A place on a trip plan: start, a stop along the way, or the destination. */
+export interface TripStop {
+  id: string;
+  label: string;
+  point: LatLng | null;
+  /** Free-form note shown when you reach this stop while driving. */
+  note?: string;
+  /** Checkpoint: called out in Drive with distance and ETA until reached. */
+  checkpoint?: boolean;
+}
+
+/** One stitched multi-leg route through every stop of a plan. */
+export interface PlanRoute {
+  coordinates: [number, number][];
+  distanceMeters: number;
+  durationSeconds: number;
+  /** Cameras (of the avoided kinds) within the corridor of this route. */
+  cameraCount: number;
+  steps: RouteStep[];
+  /** Per-leg totals, stop i → stop i+1. */
+  legs: { distanceMeters: number; durationSeconds: number; cameraCount: number }[];
+}
+
+export type RoutePreference = "avoid" | "fastest";
+
+/** Plan A / B / C: an alternative way to do the same trip. */
+export interface TripPlan {
+  id: string;
+  name: string;
+  stops: TripStop[];
+  notes: string;
+  prefer: RoutePreference;
+  computed?: {
+    avoid: PlanRoute;
+    fastest: PlanRoute;
+    computedAt: string;
+    /** Stop coordinates + avoid settings the result was computed for. */
+    key: string;
+  };
+}
+
+export interface Trip {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  plans: TripPlan[];
+}
+
+/** What Drive follows: one plan of one trip. */
+export interface ActiveTrip {
+  trip: Trip;
+  planId: string;
+}
+
 export type AppMode = "drive" | "route" | "watch" | "settings";
 
 export type AlertSoundId =
@@ -196,4 +251,6 @@ export interface Settings {
   avoidCustom: boolean;
   /** Route avoidance: community-submitted cameras. */
   avoidCommunity: boolean;
+  /** Enabled OpenStreetMap detail categories (ids from services/osmDetails). */
+  osmLayers: string[];
 }

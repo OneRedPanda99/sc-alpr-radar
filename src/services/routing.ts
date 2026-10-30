@@ -1,4 +1,10 @@
-import type { Camera, LatLng, RouteStep, SavedRoute } from "@/types";
+import type {
+  Camera,
+  LatLng,
+  PlanRoute,
+  RouteStep,
+  SavedRoute,
+} from "@/types";
 import {
   destinationPoint,
   feetToMeters,
@@ -26,7 +32,7 @@ const EXCLUDE_RADIUS_LARGE_M = feetToMeters(750);
 
 const SC_CENTER = { lat: 33.8361, lon: -81.1637 };
 
-interface ScoredRoute {
+export interface ScoredRoute {
   coordinates: [number, number][];
   distanceMeters: number;
   durationSeconds: number;
@@ -381,16 +387,21 @@ export interface RoutePlan {
   camerasUnavoidable: number;
 }
 
+/** 0–1 progress plus a human-readable stage, for the planner's progress bar. */
+export type PlanProgress = (fraction: number, stage: string) => void;
+
 export async function planRoute(
   origin: LatLng,
   destination: LatLng,
   cameras: Camera[],
+  onProgress?: PlanProgress,
 ): Promise<RoutePlan> {
   const dist = haversineMeters(origin, destination);
   if (dist < 40) {
     throw new Error("Origin and destination are too close together.");
   }
 
+  onProgress?.(0.08, "Finding the fastest route");
   let fastestRoutes: ScoredRoute[] = [];
   let useValhalla = true;
   try {
@@ -446,10 +457,20 @@ export async function planRoute(
   }
 
   const radii = [EXCLUDE_RADIUS_M, EXCLUDE_RADIUS_LARGE_M];
+  onProgress?.(
+    0.3,
+    `${fastest.cameraCount} camera${fastest.cameraCount === 1 ? "" : "s"} on the fastest way. Detouring`,
+  );
+  let attempt = 0;
 
   for (const radiusM of radii) {
     for (let pass = 0; pass < 5; pass++) {
       if (!exclude.length) break;
+      attempt++;
+      onProgress?.(
+        Math.min(0.9, 0.3 + attempt * 0.07),
+        `Routing around ${exclude.length} camera zones (try ${attempt})`,
+      );
       let routes: ScoredRoute[] = [];
       try {
         routes = await valhallaPlan(
@@ -524,6 +545,82 @@ export async function planRoute(
     camerasOnFastest: fastest.cameraCount,
     camerasUnavoidable: best.cameraCount,
   };
+}
+
+function legFrom(r: ScoredRoute) {
+  return {
+    distanceMeters: r.distanceMeters,
+    durationSeconds: r.durationSeconds,
+    cameraCount: r.cameraCount,
+  };
+}
+
+function stitch(
+  legs: ScoredRoute[],
+  stops: { label: string }[],
+): PlanRoute {
+  const coordinates: [number, number][] = [];
+  const steps: RouteStep[] = [];
+  legs.forEach((leg, i) => {
+    // Each leg starts where the previous ended; drop the duplicate vertex.
+    coordinates.push(...(i === 0 ? leg.coordinates : leg.coordinates.slice(1)));
+    const isLast = i === legs.length - 1;
+    // Drop each leg's own "arrive" step and replace it with a named stop.
+    const legSteps = leg.steps.filter((s) => s.maneuverType !== "arrive");
+    steps.push(...legSteps);
+    const end = leg.coordinates[leg.coordinates.length - 1];
+    steps.push({
+      instruction: isLast
+        ? `Arrive at ${stops[i + 1]?.label ?? "destination"}`
+        : `Stop: ${stops[i + 1]?.label ?? `stop ${i + 1}`}`,
+      name: "",
+      distanceMeters: 0,
+      durationSeconds: 0,
+      maneuverType: isLast ? "arrive" : "waypoint",
+      location: end,
+    });
+  });
+  return {
+    coordinates,
+    distanceMeters: legs.reduce((s, l) => s + l.distanceMeters, 0),
+    durationSeconds: legs.reduce((s, l) => s + l.durationSeconds, 0),
+    cameraCount: legs.reduce((s, l) => s + l.cameraCount, 0),
+    steps,
+    legs: legs.map(legFrom),
+  };
+}
+
+/**
+ * Plan every leg of a multi-stop plan, sequentially (the public Valhalla
+ * server is shared; firing every leg at once gets throttled), and stitch the
+ * legs into one fastest and one camera-avoiding route.
+ */
+export async function planStops(
+  stops: { label: string; point: LatLng }[],
+  cameras: Camera[],
+  onProgress?: PlanProgress,
+): Promise<{ avoid: PlanRoute; fastest: PlanRoute }> {
+  if (stops.length < 2) throw new Error("Add a start and a destination.");
+  const fastLegs: ScoredRoute[] = [];
+  const avoidLegs: ScoredRoute[] = [];
+  const n = stops.length - 1;
+  for (let i = 0; i < n; i++) {
+    const legLabel = n > 1 ? `Leg ${i + 1} of ${n}: ` : "";
+    const plan = await planRoute(
+      stops[i].point,
+      stops[i + 1].point,
+      cameras,
+      (f, stage) => onProgress?.((i + f) / n, `${legLabel}${stage}`),
+    ).catch((e: Error) => {
+      throw new Error(
+        n > 1 ? `${stops[i].label} → ${stops[i + 1].label}: ${e.message}` : e.message,
+      );
+    });
+    fastLegs.push(plan.fastest);
+    avoidLegs.push(plan.avoidance);
+  }
+  onProgress?.(1, "Done");
+  return { fastest: stitch(fastLegs, stops), avoid: stitch(avoidLegs, stops) };
 }
 
 export function planToSavedRoute(
@@ -651,6 +748,23 @@ export async function geocode(
     }
   }
   return [];
+}
+
+/** Best-effort label for a dropped pin; falls back to coordinates offline. */
+export async function reverseGeocode(point: LatLng): Promise<string> {
+  const fallback = `Pin ${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}`;
+  try {
+    const res = await fetch(
+      `https://photon.komoot.io/reverse?lat=${point.lat}&lon=${point.lon}&limit=1`,
+    );
+    if (!res.ok) return fallback;
+    const json = await res.json();
+    const f = json.features?.[0];
+    if (!f) return fallback;
+    return formatPhotonLabel(f.properties ?? {}, fallback);
+  } catch {
+    return fallback;
+  }
 }
 
 export function formatDistance(m: number): string {

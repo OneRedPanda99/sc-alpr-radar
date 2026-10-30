@@ -1,7 +1,11 @@
 import { create } from "zustand";
 import type { Camera, CameraDataset } from "@/types";
 import { CameraGrid } from "@/services/geo";
-import { cameraFromFeatureProps } from "@/services/cameraParse";
+import {
+  cameraFromFeatureProps,
+  cleanAttribution,
+  mergeColocated,
+} from "@/services/cameraParse";
 import {
   loadCameras,
   loadCommunityCache,
@@ -65,6 +69,18 @@ interface CameraState {
   refreshAircraft: (lat: number, lon: number) => Promise<void>;
 }
 
+/** Pack cameras with attribution cleaned and same-pole duplicates merged. */
+const packCache = new WeakMap<CameraDataset, Camera[]>();
+function packCameras(pack: CameraDataset | null): Camera[] {
+  if (!pack) return [];
+  let cams = packCache.get(pack);
+  if (!cams) {
+    cams = mergeColocated(pack.cameras.map(cleanAttribution));
+    packCache.set(pack, cams);
+  }
+  return cams;
+}
+
 function combine(
   pack: CameraDataset | null,
   community: Camera[],
@@ -80,7 +96,7 @@ function combine(
   const shared = new Set(community.map(key));
   const localOnly = custom.filter((c) => !shared.has(key(c)));
   const cameras = [
-    ...(pack?.cameras ?? []),
+    ...packCameras(pack),
     ...community,
     ...localOnly,
     ...extra,
