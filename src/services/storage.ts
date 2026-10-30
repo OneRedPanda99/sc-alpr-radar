@@ -1,5 +1,11 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
-import type { Camera, CameraDataset, SavedRoute, Settings } from "@/types";
+import type {
+  Camera,
+  CameraDataset,
+  SavedRoute,
+  Settings,
+  Trip,
+} from "@/types";
 
 interface AlprDB extends DBSchema {
   meta: {
@@ -62,6 +68,7 @@ export const DEFAULT_SETTINGS: Settings = {
   avoidTraffic: false,
   avoidCustom: true,
   avoidCommunity: true,
+  osmLayers: [],
 };
 
 export async function loadCameras(): Promise<CameraDataset | undefined> {
@@ -138,6 +145,7 @@ export async function loadSettings(): Promise<Settings> {
   if (!ALERT_SOUND_IDS.has(merged.alertSound)) {
     merged.alertSound = DEFAULT_SETTINGS.alertSound;
   }
+  if (!Array.isArray(merged.osmLayers)) merged.osmLayers = [];
   return merged;
 }
 
@@ -160,4 +168,82 @@ export async function saveRoute(route: SavedRoute): Promise<void> {
 
 export async function deleteRoute(id: string): Promise<void> {
   await (await db()).delete("routes", id);
+}
+
+/**
+ * Trips live in the meta store as one array: there are only ever a handful,
+ * and keeping them out of a new object store avoids an IndexedDB version bump.
+ * Old single A→B saved routes are folded in as one-plan trips on first load.
+ */
+export async function listTrips(): Promise<Trip[]> {
+  const database = await db();
+  let trips = ((await database.get("meta", "trips")) as Trip[] | undefined) ?? [];
+  const legacy = await database.getAll("routes");
+  if (legacy.length) {
+    trips = [...trips, ...legacy.map(legacyRouteToTrip)];
+    await database.put("meta", trips, "trips");
+    for (const r of legacy) await database.delete("routes", r.id);
+  }
+  return trips.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export async function saveTrip(trip: Trip): Promise<void> {
+  const database = await db();
+  const trips = ((await database.get("meta", "trips")) as Trip[] | undefined) ?? [];
+  const next = trips.filter((t) => t.id !== trip.id);
+  next.push(trip);
+  await database.put("meta", next, "trips");
+}
+
+export async function deleteTrip(id: string): Promise<void> {
+  const database = await db();
+  const trips = ((await database.get("meta", "trips")) as Trip[] | undefined) ?? [];
+  await database.put(
+    "meta",
+    trips.filter((t) => t.id !== id),
+    "trips",
+  );
+}
+
+function legacyRouteToTrip(r: SavedRoute): Trip {
+  const route = {
+    coordinates: r.coordinates,
+    distanceMeters: r.distanceMeters,
+    durationSeconds: r.durationSeconds,
+    cameraCount: r.camerasUnavoidable,
+    steps: r.steps,
+    legs: [
+      {
+        distanceMeters: r.distanceMeters,
+        durationSeconds: r.durationSeconds,
+        cameraCount: r.camerasUnavoidable,
+      },
+    ],
+  };
+  return {
+    id: r.id,
+    name: r.destinationLabel,
+    createdAt: r.createdAt,
+    updatedAt: r.createdAt,
+    plans: [
+      {
+        id: `${r.id}-a`,
+        name: "Plan A",
+        notes: "",
+        prefer: "avoid",
+        stops: [
+          { id: `${r.id}-o`, label: "Start", point: r.origin },
+          { id: `${r.id}-d`, label: r.destinationLabel, point: r.destination },
+        ],
+        // Key left blank so the planner treats it as stale and re-plans
+        // against today's cameras the first time it's opened.
+        computed: {
+          avoid: route,
+          fastest: route,
+          computedAt: r.createdAt,
+          key: "",
+        },
+      },
+    ],
+  };
 }

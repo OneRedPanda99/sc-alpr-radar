@@ -35,6 +35,7 @@ function pickSettings(s: Settings): Settings {
     avoidTraffic: s.avoidTraffic,
     avoidCustom: s.avoidCustom,
     avoidCommunity: s.avoidCommunity,
+    osmLayers: s.osmLayers,
   };
 }
 

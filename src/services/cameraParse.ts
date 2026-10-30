@@ -119,3 +119,69 @@ function isOmni(tags: Record<string, string>, directions: number[]): boolean {
     directions.includes(360)
   );
 }
+
+const AGENCY = /police|sheriff|department|\bpd\b|\bpcso\b|town of|city of|county/i;
+const RAW_BRAND_FIXES: Record<string, string> = { rekoe: "Rekor", flock: "Flock Safety" };
+
+/** "RichlandCountySheriffDepartment" → "Richland County Sheriff Department". */
+function spaceCamel(s: string): string {
+  return s.includes(" ") ? s : s.replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
+/**
+ * Tidy who-made-it / who-runs-it. OSM mappers often type the agency into
+ * `manufacturer`, which then showed up on the card as the camera's maker,
+ * and a few operators carry stray brackets or spelling variants.
+ */
+export function cleanAttribution(c: Camera): Camera {
+  let rawBrand = c.rawBrand?.trim() || undefined;
+  let operator = c.operator?.replace(/^\[(.*)\]$/, "$1").trim() || undefined;
+  if (rawBrand && AGENCY.test(spaceCamel(rawBrand)) && c.kind !== "police") {
+    operator ??= spaceCamel(rawBrand);
+    rawBrand = undefined;
+  }
+  if (rawBrand) rawBrand = RAW_BRAND_FIXES[rawBrand.toLowerCase()] ?? rawBrand;
+  if (operator && /^lowes$/i.test(operator)) operator = "Lowe's";
+  if (rawBrand === c.rawBrand && operator === c.operator) return c;
+  return { ...c, rawBrand, operator };
+}
+
+/**
+ * One pole often carries two cameras facing different ways, and OSM maps them
+ * as two nodes on the same spot (sometimes the same camera is simply mapped
+ * twice). Drawn separately they stack into one blob and alert twice; merged,
+ * they're one point with every facing it covers.
+ */
+export function mergeColocated(cameras: Camera[]): Camera[] {
+  const out: Camera[] = [];
+  const byKey = new Map<string, number>();
+  for (const c of cameras) {
+    if (c.kind !== "alpr" && c.kind !== "speed") {
+      out.push(c);
+      continue;
+    }
+    const key = `${c.kind}:${c.brand}:${c.lat.toFixed(5)},${c.lon.toFixed(5)}`;
+    const at = byKey.get(key);
+    if (at == null) {
+      byKey.set(key, out.length);
+      out.push(c);
+      continue;
+    }
+    const a = out[at];
+    const omni = a.omni || c.omni;
+    const directions = omni
+      ? []
+      : [...new Set([...a.directions, ...c.directions].map((d) => Math.round(d) % 360))];
+    out[at] = {
+      ...a,
+      name: a.name ?? c.name,
+      operator: a.operator ?? c.operator,
+      rawBrand: a.rawBrand ?? c.rawBrand,
+      imageUrl: a.imageUrl ?? c.imageUrl,
+      directions,
+      omni,
+      fovHalfAngle: omni ? 180 : a.fovHalfAngle,
+    };
+  }
+  return out;
+}
