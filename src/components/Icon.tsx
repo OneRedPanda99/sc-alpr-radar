@@ -16,7 +16,11 @@ export type IconName =
   | "up"
   | "down"
   | "pin"
-  | "search";
+  | "search"
+  | "sound"
+  | "mute"
+  | "note"
+  | "check";
 
 const stroke = {
   fill: "none",
@@ -58,6 +62,20 @@ const PATHS: Record<IconName, JSX.Element> = {
     </>
   ),
   down: <path d="m6 9 6 6 6-6" {...stroke} />,
+  sound: (
+    <>
+      <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" {...stroke} />
+      <path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" {...stroke} />
+    </>
+  ),
+  mute: (
+    <>
+      <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" {...stroke} />
+      <path d="m16 9.5 5 5M21 9.5l-5 5" {...stroke} />
+    </>
+  ),
+  note: <path d="M5 4h10l4 4v12H5zM15 4v4h4M8.5 12h7M8.5 16h5" {...stroke} />,
+  check: <path d="m5 12.5 4.5 4.5L19 7.5" {...stroke} />,
   pin: (
     <>
       <path d="M12 21s-6.5-6.2-6.5-11.2a6.5 6.5 0 0 1 13 0C18.5 14.8 12 21 12 21Z" {...stroke} />

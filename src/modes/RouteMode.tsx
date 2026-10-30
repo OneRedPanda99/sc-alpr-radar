@@ -447,16 +447,19 @@ export function RouteMode({
           onMapClick={handleMapPlace}
           osmLayers={osmLayers}
         />
-        <div className="map-fabs">
-          <button
-            type="button"
-            className="fab"
-            onClick={() => setLayersOpen((v) => !v)}
-            aria-label="Map layers"
-            aria-expanded={layersOpen}
-          >
-            <Icon name="layers" />
-          </button>
+        <div className="map-tools" role="toolbar" aria-label="Map tools">
+          <div className="tool-group">
+            <button
+              type="button"
+              className={`map-tool ${layersOpen ? "on" : ""}`}
+              onClick={() => setLayersOpen((v) => !v)}
+              aria-expanded={layersOpen}
+              title="Basemap, camera types and OpenStreetMap details"
+            >
+              <Icon name="layers" />
+              <span>Layers</span>
+            </button>
+          </div>
         </div>
         {layersOpen && <LayersPanel onClose={() => setLayersOpen(false)} />}
         {placingStopId && (
@@ -646,32 +649,40 @@ export function RouteMode({
                               })
                             }
                           >
-                            Note
+                            <Icon name="note" /> Note
                           </button>
                           <span className="stop-tools-spacer" />
-                          <button
-                            type="button"
-                            className="tool-btn icon"
-                            onClick={() => moveStop(i, -1)}
-                            disabled={i === 0}
-                            aria-label="Move up"
-                          >
-                            <Icon name="up" />
-                          </button>
-                          <button
-                            type="button"
-                            className="tool-btn icon"
-                            onClick={() => moveStop(i, 1)}
-                            disabled={isEnd}
-                            aria-label="Move down"
-                          >
-                            <Icon name="down" />
-                          </button>
+                          {/* With only a start and destination, Reverse does the reordering. */}
+                          {n > 2 && (
+                            <>
+                              <button
+                                type="button"
+                                className="tool-btn icon"
+                                onClick={() => moveStop(i, -1)}
+                                disabled={i === 0}
+                                aria-label="Move earlier"
+                                title="Move earlier in the trip"
+                              >
+                                <Icon name="up" />
+                              </button>
+                              <button
+                                type="button"
+                                className="tool-btn icon"
+                                onClick={() => moveStop(i, 1)}
+                                disabled={isEnd}
+                                aria-label="Move later"
+                                title="Move later in the trip"
+                              >
+                                <Icon name="down" />
+                              </button>
+                            </>
+                          )}
                           <button
                             type="button"
                             className="tool-btn icon"
                             onClick={() => removeStop(i)}
                             aria-label={n > 2 ? "Remove stop" : "Clear"}
+                            title={n > 2 ? "Remove this stop" : "Clear this place"}
                           >
                             <Icon name="trash" />
                           </button>
@@ -691,8 +702,11 @@ export function RouteMode({
                 {gpsError && <div className="hud-error">{gpsError}</div>}
               </div>
 
-              <div className="avoid-row">
-                <span className="avoid-label">Avoid</span>
+              <div className="avoid-row" role="group" aria-labelledby="avoid-label">
+                <span className="avoid-label" id="avoid-label">
+                  Steer around
+                  <small>Tap to turn on or off. Applies to every plan.</small>
+                </span>
                 {AVOID_CHIPS.map((c) => (
                   <button
                     key={c.key}
@@ -701,6 +715,7 @@ export function RouteMode({
                     aria-pressed={avoid[c.key]}
                     onClick={() => setSetting(c.key, !avoid[c.key])}
                   >
+                    {avoid[c.key] && <Icon name="check" />}
                     {c.label}
                   </button>
                 ))}

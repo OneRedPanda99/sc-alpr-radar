@@ -756,71 +756,82 @@ export function DriveMode({
           </div>
         )}
 
-        <div className="map-fabs">
-          <button
-            type="button"
-            className={`fab ${searchOpen ? "on" : ""}`}
-            onClick={() => setSearchOpen((v) => !v)}
-            aria-label="Go to a place or coordinates"
-            aria-expanded={searchOpen}
-          >
-            <Icon name="search" />
-          </button>
-          <button
-            type="button"
-            className="fab"
-            onClick={() => setLayersOpen((v) => !v)}
-            aria-label="Map layers"
-            aria-expanded={layersOpen}
-          >
-            <Icon name="layers" />
-          </button>
-          <button
-            type="button"
-            className="fab"
-            onClick={() => setRecenter((n) => n + 1)}
-            aria-label="Center on my location"
-            disabled={!here}
-          >
-            <Icon name="locate" />
-          </button>
-          <button
-            type="button"
-            className={`fab fab-feed ${feedOpen ? "on" : ""}`}
-            onClick={() => setFeedOpen((v) => !v)}
-            aria-label="Live camera feed"
-            aria-pressed={feedOpen}
-          >
-            <Icon name="video" />
-          </button>
+        {/* Every map tool lives in this one column, grouped by what it's for:
+            moving the map, what the map shows, and editing the camera data. */}
+        <div className="map-tools" role="toolbar" aria-label="Map tools">
+          <div className="tool-group" aria-label="Move the map">
+            <button
+              type="button"
+              className={`map-tool ${searchOpen ? "on" : ""}`}
+              onClick={() => setSearchOpen((v) => !v)}
+              aria-expanded={searchOpen}
+              title="Go to an address, place or coordinates"
+            >
+              <Icon name="search" />
+              <span>Find</span>
+            </button>
+            <button
+              type="button"
+              className="map-tool"
+              onClick={() => setRecenter((n) => n + 1)}
+              disabled={!here}
+              title={here ? "Center on my location" : "Location is off"}
+            >
+              <Icon name="locate" />
+              <span>Me</span>
+            </button>
+          </div>
+          <div className="tool-group" aria-label="What the map shows">
+            <button
+              type="button"
+              className={`map-tool ${layersOpen ? "on" : ""}`}
+              onClick={() => setLayersOpen((v) => !v)}
+              aria-expanded={layersOpen}
+              title="Basemap, camera types and OpenStreetMap details"
+            >
+              <Icon name="layers" />
+              <span>Layers</span>
+            </button>
+            <button
+              type="button"
+              className={`map-tool tool-feed ${feedOpen ? "on" : ""}`}
+              onClick={() => setFeedOpen((v) => !v)}
+              aria-pressed={feedOpen}
+              title="Live traffic camera near you"
+            >
+              <Icon name="video" />
+              <span>Live</span>
+            </button>
+            <button
+              type="button"
+              className={`map-tool ${muted ? "" : "on"}`}
+              onClick={() => setSetting("muted", !muted)}
+              aria-pressed={!muted}
+              title={muted ? "Camera alerts are silent" : "Camera alerts make a sound"}
+            >
+              <Icon name={muted ? "mute" : "sound"} />
+              <span>{muted ? "Muted" : "Sound"}</span>
+            </button>
+          </div>
+          {!driving && (
+            <div className="tool-group" aria-label="Edit cameras">
+              <button
+                type="button"
+                className={`map-tool ${addKind ? "on" : ""}`}
+                onClick={() => {
+                  setAddKind(addKind ? null : "alpr");
+                  setAddFacing(null);
+                }}
+                title="Add a camera the map is missing"
+              >
+                <Icon name="plus" />
+                <span>{addKind ? "Cancel" : "Add"}</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {layersOpen && <LayersPanel onClose={() => setLayersOpen(false)} />}
-
-        <div className="map-controls">
-          <button
-            className={`map-chip add ${addKind ? "on" : ""}`}
-            onClick={() => {
-              if (addKind) {
-                setAddKind(null);
-                setAddFacing(null);
-              } else {
-                setAddKind("alpr");
-                setAddFacing(null);
-              }
-            }}
-            title="Add a camera the map is missing"
-          >
-            {addKind ? "Cancel" : "+ Add camera"}
-          </button>
-          <button
-            className={`map-chip ${muted ? "" : "on"}`}
-            onClick={() => setSetting("muted", !muted)}
-            aria-pressed={!muted}
-          >
-            {muted ? "Sound off" : "Sound on"}
-          </button>
-        </div>
 
         {addKind && (
           <div className="add-banner">
@@ -874,7 +885,8 @@ export function DriveMode({
                 </div>
               </div>
 
-              {trip && plan ? (
+              {/* On a laptop the rail already shows the trip, so don't repeat it here. */}
+              {trip && plan && !wide ? (
                 <div className="start-trip" style={{ ["--plan" as string]: color }}>
                   <div className="start-trip-text">
                     <span className="start-trip-title">{tripTitle(trip)}</span>
@@ -898,7 +910,7 @@ export function DriveMode({
                   </button>
                 </div>
               ) : null}
-              {planSwitcher}
+              {!wide && planSwitcher}
 
               <div className="start-actions">
                 <button
@@ -916,7 +928,7 @@ export function DriveMode({
                     "Start driving"
                   )}
                 </button>
-                {!trip && (
+                {!trip && !wide && (
                   <button type="button" className="ghost-btn tall" onClick={onOpenPlanner}>
                     <Icon name="route" /> Plan a trip
                   </button>
@@ -997,6 +1009,16 @@ export function DriveMode({
               <button type="button" className="ghost-btn" onClick={onOpenPlanner}>
                 Edit
               </button>
+              {!driving && (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={onClearTrip}
+                  aria-label="Stop following this trip"
+                >
+                  ✕
+                </button>
+              )}
             </div>
             {route && (
               <div className="rail-trip-stats">
