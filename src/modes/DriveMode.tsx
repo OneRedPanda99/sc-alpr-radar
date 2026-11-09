@@ -52,6 +52,14 @@ import {
 import { KIND_LABELS } from "@/services/brand";
 import { deadEndNear } from "@/services/deadEnds";
 import {
+  DriveRecorder,
+  PASS_METERS,
+  monthText,
+  monthTotals,
+  saveDrive,
+  type DriveRecord,
+} from "@/services/driveLog";
+import {
   alertContains,
   alertsAsGeoJSON,
   alertsOnLine,
@@ -194,6 +202,10 @@ export function DriveMode({
   const [searchOpen, setSearchOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [clips, setClips] = useState<{ url: string; name: string; at: number }[]>([]);
+  /** Builds this drive's record; the summary shows when you stop. */
+  const recorderRef = useRef<DriveRecorder | null>(null);
+  const lastFixRef = useRef<LatLng | null>(null);
+  const [summary, setSummary] = useState<DriveRecord | null>(null);
   /** The report you just made, for changing its type or undoing it. */
   const [marked, setMarked] = useState<{ id: string; type: ReportType } | null>(null);
   const { fix, error } = useGeolocation({ enabled: driving });
@@ -303,6 +315,30 @@ export function DriveMode({
   }, [plan, reached]);
 
   const here = fix?.point ?? browseCenter;
+
+  // --- Drive log: distance and what you actually drove past ----------------
+  useEffect(() => {
+    const rec = recorderRef.current;
+    if (!driving || !fix || !rec) return;
+    const prev = lastFixRef.current;
+    rec.move(fix.point, prev ? haversineMeters(prev, fix.point) : 0);
+    lastFixRef.current = fix.point;
+    for (const h of grid?.within(fix.point, PASS_METERS) ?? []) rec.pass(h.camera);
+  }, [driving, fix, grid]);
+
+  const stopDrive = () => {
+    const rec = recorderRef.current;
+    if (rec) {
+      const record = rec.finish(clips.filter((c) => c.at >= rec.start).length);
+      // A few seconds parked isn't a drive worth keeping.
+      if (record.meters > 200) {
+        saveDrive(record);
+        setSummary(record);
+      }
+    }
+    recorderRef.current = null;
+    setDriving(false);
+  };
 
   // --- Alerts ---------------------------------------------------------------
   useEffect(() => {
@@ -420,6 +456,10 @@ export function DriveMode({
     }
     return best;
   }, [driving, fix, dataset, isShown]);
+
+  useEffect(() => {
+    if (policeAhead) recorderRef.current?.sawPolice(policeAhead.cam.id);
+  }, [policeAhead]);
 
   // One chirp when a police aircraft or a circling one first shows up; your
   // own reports already alert through the normal camera alerts.
@@ -616,6 +656,9 @@ export function DriveMode({
     await unlockAudio();
     trackerRef.current.reset();
     setSearchOpen(false);
+    setSummary(null);
+    recorderRef.current = new DriveRecorder();
+    lastFixRef.current = null;
     setDriving(true);
   };
 
@@ -996,6 +1039,10 @@ export function DriveMode({
 
         {layersOpen && <LayersPanel onClose={() => setLayersOpen(false)} />}
 
+        {summary && !driving && (
+          <DriveSummary record={summary} onClose={() => setSummary(null)} />
+        )}
+
         {marked && (
           <div className="report-toast" role="status">
             <span className="report-toast-title">
@@ -1082,6 +1129,7 @@ export function DriveMode({
                         ? "Couldn't load the camera pack. Check Settings."
                         : "Loading camera pack"}
                   </p>
+                  <MonthLine />
                 </div>
               </div>
 
@@ -1219,7 +1267,7 @@ export function DriveMode({
         </div>
 
         {driving && (
-          <button className="stop-btn" onClick={() => setDriving(false)}>
+          <button className="stop-btn" onClick={stopDrive}>
             Stop
           </button>
         )}
@@ -1337,4 +1385,63 @@ function spokenName(c: Camera): string {
     default:
       return "Camera";
   }
+}
+
+/** The month so far, once there is one. */
+function MonthLine() {
+  const t = useMemo(() => monthTotals(), []);
+  if (!t.drives) return null;
+  return (
+    <p className="month-line">{monthText(t)}</p>
+  );
+}
+
+/** One screen after each drive: what you passed and what you kept. */
+function DriveSummary({ record, onClose }: { record: DriveRecord; onClose: () => void }) {
+  const mins = Math.max(1, Math.round((record.end - record.start) / 60000));
+  const total = Object.values(record.kinds).reduce((a, b) => a + (b ?? 0), 0);
+  const month = monthTotals();
+  return (
+    <div className="drive-summary" role="dialog" aria-label="Drive summary">
+      <div className="drive-summary-head">
+        <h3>Drive summary</h3>
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
+      </div>
+      <div className="drive-summary-stats">
+        <span>
+          <b>{(record.meters / 1609.34).toFixed(1)}</b> mi
+        </span>
+        <span>
+          <b>{mins}</b> min
+        </span>
+        <span>
+          <b>{total}</b> camera{total === 1 ? "" : "s"} passed
+        </span>
+      </div>
+      {total > 0 ? (
+        <div className="look-nearby">
+          {(Object.entries(record.kinds) as [CameraKind, number][])
+            .sort((a, b) => b[1] - a[1])
+            .map(([kind, n]) => (
+              <span key={kind} className="cam-chip">
+                {n} {KIND_LABELS[kind].replace(/ \(.*\)$/, "").toLowerCase()}
+                {n > 1 && !/s$/.test(KIND_LABELS[kind]) ? "s" : ""}
+              </span>
+            ))}
+          {record.flock > 0 && <span className="cam-chip">{record.flock} Flock</span>}
+        </div>
+      ) : (
+        <p className="tip">No cameras within {PASS_METERS} m of your path.</p>
+      )}
+      <p className="tip">
+        {record.police > 0 ? `Police activity seen ahead: ${record.police}. ` : ""}
+        {record.clips > 0
+          ? `${record.clips} pass clip${record.clips === 1 ? "" : "s"} saved under Live.`
+          : "No pass clips this time."}
+      </p>
+      <p className="month-line">{monthText(month)}</p>
+    </div>
+  );
 }
