@@ -85,7 +85,9 @@ export interface Camera {
    * carry plenty of non-police traffic that shouldn't be implied to be police.
    */
   lawEnforcement?: boolean;
-  /** A "Police here" spot you marked yourself (kind `incident`). */
+  /** Anything you marked with the Report button (kind `incident`). */
+  myReport?: boolean;
+  /** One of those reports that is police (cruiser or on foot). */
   policeReport?: boolean;
   /** An aircraft that has been circling one spot for the last few minutes. */
   circling?: boolean;
@@ -231,7 +233,9 @@ export interface Settings {
   showIncidents: boolean;
   /** Show/hide live aircraft overhead (ADS-B). */
   showAircraft: boolean;
-  /** Show/hide your own "Police here" reports. */
+  /** Show/hide National Weather Service warnings (flooding first). */
+  showWeather: boolean;
+  /** Show/hide your own reports (police and hazards). */
   showPoliceReports: boolean;
   /** Play alert sound when approaching a live incident. */
   alertIncidents: boolean;
@@ -245,6 +249,8 @@ export interface Settings {
    * readable. Off by default because it hurts an already-dark daytime feed.
    */
   dimHeadlights: boolean;
+  /** Say what's coming ("Flock camera in 400 feet") after the alert tone. */
+  spokenAlerts: boolean;
   /** Basemap style key. */
   basemap: "streets" | "satellite";
   /** Route avoidance: Flock Safety plate readers. */

@@ -2492,3 +2492,20 @@ button:disabled {
   font-size: 20px;
   line-height: 1;
 }
+
+/* NWS warning: where you are, on your route, or on a planned route card. */
+.weather-hit {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(8, 28, 60, 0.92);
+  border: 1px solid rgba(47, 128, 237, 0.7);
+  box-shadow: inset 4px 0 0 #2f80ed;
+}
+
+.weather-hit.inline {
+  margin: 10px 0 0;
+}

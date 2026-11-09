@@ -32,6 +32,8 @@ import { useWakeLock } from "@/hooks/useWakeLock";
 import {
   AlertTracker,
   playAlert,
+  speak,
+  spokenDistance,
   unlockAudio,
 } from "@/services/alertEngine";
 import {
@@ -50,10 +52,19 @@ import {
 import { KIND_LABELS } from "@/services/brand";
 import { deadEndNear } from "@/services/deadEnds";
 import {
+  alertContains,
+  alertsAsGeoJSON,
+  alertsOnLine,
+  untilText,
+  useWeatherStore,
+} from "@/services/weather";
+import {
+  REPORT_TYPES,
   addReport,
   freshness,
   removeReport,
   updateReport,
+  type ReportType,
 } from "@/services/policeReports";
 import { makeIsAlertable, makeIsShown } from "@/services/layers";
 import { useMovingAircraft } from "@/hooks/useMovingAircraft";
@@ -155,6 +166,7 @@ export function DriveMode({
     alertSound,
     basemap,
     osmLayers,
+    spokenAlerts,
     set: setSetting,
   } = useSettingsStore();
 
@@ -182,8 +194,8 @@ export function DriveMode({
   const [searchOpen, setSearchOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [clips, setClips] = useState<{ url: string; name: string; at: number }[]>([]);
-  /** The report you just made, for the cruiser / on foot / undo choice. */
-  const [marked, setMarked] = useState<{ id: string; onFoot: boolean } | null>(null);
+  /** The report you just made, for changing its type or undoing it. */
+  const [marked, setMarked] = useState<{ id: string; type: ReportType } | null>(null);
   const { fix, error } = useGeolocation({ enabled: driving });
   useWakeLock(driving);
 
@@ -317,6 +329,9 @@ export function DriveMode({
             ? 1 - Math.min(1, nearest.distance / radiusMeters)
             : 0.45;
         playAlert({ intensity, sound: alertSound });
+        if (spokenAlerts && nearest) {
+          speak(`${spokenName(nearest.camera)} in ${spokenDistance(nearest.distance)}`);
+        }
       }
     }
   }, [
@@ -371,7 +386,7 @@ export function DriveMode({
     if (!here) return;
     const r = addReport(here);
     refreshReports();
-    setMarked({ id: r.id, onFoot: false });
+    setMarked({ id: r.id, type: r.type });
   };
   useEffect(() => {
     if (!marked) return;
@@ -416,7 +431,32 @@ export function DriveMode({
     if (airAlertedRef.current.has(key)) return;
     airAlertedRef.current.add(key);
     playAlert({ intensity: 0.55, sound: alertSound });
-  }, [policeAhead, muted, alertSound]);
+    if (spokenAlerts) {
+      speak(`${c.lawEnforcement ? "Police aircraft" : "Aircraft"}${c.circling ? " circling" : ""} nearby`);
+    }
+  }, [policeAhead, muted, alertSound, spokenAlerts]);
+
+  // --- Weather: flooding and the like, where you are or on your route -------
+  const weatherAlerts = useWeatherStore((s) => s.alerts);
+  const showWeather = settings.showWeather;
+  const weatherFC = useMemo(
+    () => (showWeather ? alertsAsGeoJSON(weatherAlerts) : null),
+    [showWeather, weatherAlerts],
+  );
+  const weatherHit = useMemo(() => {
+    if (!showWeather || !weatherAlerts.length || !here) return null;
+    const at = weatherAlerts.find((a) => alertContains(a, here));
+    if (at) return { alert: at, where: "here" };
+    const onRoute = route ? alertsOnLine(weatherAlerts, route.coordinates)[0] : undefined;
+    return onRoute ? { alert: onRoute, where: "on your route" } : null;
+  }, [showWeather, weatherAlerts, here, route]);
+  const weatherSaidRef = useRef("");
+  useEffect(() => {
+    const key = weatherHit ? `${weatherHit.alert.id}:${weatherHit.where}` : "";
+    if (!driving || key === weatherSaidRef.current) return;
+    weatherSaidRef.current = key;
+    if (weatherHit && !muted && spokenAlerts) speak(`${weatherHit.alert.event} ${weatherHit.where}`, 0);
+  }, [weatherHit, driving, muted, spokenAlerts]);
 
   // --- No-go roads: don't turn into something with no way out ---------------
   const noGo = useMemo(() => {
@@ -434,6 +474,16 @@ export function DriveMode({
     const hit = deadEndNear(p, 18);
     return hit ? { inside: false, name: String(hit.properties?.name ?? "") } : null;
   }, [driving, fix, osmLayers]);
+
+  // Say the no-go warning once per road, not every second you're near it.
+  const noGoSaidRef = useRef("");
+  useEffect(() => {
+    const key = noGo ? `${noGo.inside}:${noGo.name}` : "";
+    if (key === noGoSaidRef.current) return;
+    noGoSaidRef.current = key;
+    if (!noGo || muted || !spokenAlerts) return;
+    speak(noGo.inside ? "Dead end. Turn around." : "No-go road ahead", 0);
+  }, [noGo, muted, spokenAlerts]);
 
   // --- Follow me: a delayed live feed of your own drive ----------------------
   // Where you've been, so a delayed frame can be matched to your position then.
@@ -755,6 +805,7 @@ export function DriveMode({
           onMapClick={handlePlace}
           osmLayers={osmLayers}
           lookAt={look}
+          weather={weatherFC}
           onLongPress={handleLongPress}
         />
 
@@ -917,10 +968,14 @@ export function DriveMode({
               className="map-tool tool-police"
               onClick={markPolice}
               disabled={!here}
-              title={here ? "Mark police at your location (kept on this device, clears in 20 min)" : "Location is off"}
+              title={
+                here
+                  ? "Mark police at your location; change it to a hazard after (kept on this device)"
+                  : "Location is off"
+              }
             >
               <Icon name="shield" />
-              <span>Police</span>
+              <span>Report</span>
             </button>
             {!driving && (
               <button
@@ -944,22 +999,23 @@ export function DriveMode({
         {marked && (
           <div className="report-toast" role="status">
             <span className="report-toast-title">
-              <Icon name="shield" /> Police marked here
+              <Icon name="shield" /> Marked here:{" "}
+              {REPORT_TYPES.find((t) => t.type === marked.type)?.label}
             </span>
             <div className="report-toast-actions">
-              {[false, true].map((onFoot) => (
+              {REPORT_TYPES.map((t) => (
                 <button
-                  key={String(onFoot)}
+                  key={t.type}
                   type="button"
-                  className={`chip ${marked.onFoot === onFoot ? "on" : ""}`}
-                  aria-pressed={marked.onFoot === onFoot}
+                  className={`chip ${marked.type === t.type ? "on" : ""}`}
+                  aria-pressed={marked.type === t.type}
                   onClick={() => {
-                    updateReport(marked.id, { onFoot });
+                    updateReport(marked.id, { type: t.type });
                     refreshReports();
-                    setMarked({ ...marked, onFoot });
+                    setMarked({ ...marked, type: t.type });
                   }}
                 >
-                  {onFoot ? "On foot" : "Cruiser"}
+                  <span aria-hidden="true">{t.symbol}</span> {t.label}
                 </button>
               ))}
               <button
@@ -1095,6 +1151,20 @@ export function DriveMode({
                 {currentStep.distanceMeters > 0 && formatDistance(currentStep.distanceMeters)}
                 {route &&
                   ` · ${formatDuration(route.durationSeconds)} total · ${route.cameraCount} cams on ${plan?.name}`}
+              </div>
+            </div>
+          )}
+
+          {weatherHit && (
+            <div className="weather-hit" role="alert">
+              <span className="no-go-icon" aria-hidden="true">⚠️</span>
+              <div className="police-ahead-text">
+                <span className="police-ahead-title">
+                  {weatherHit.alert.event} {weatherHit.where}
+                </span>
+                <span className="police-ahead-sub">
+                  National Weather Service {untilText(weatherHit.alert)}
+                </span>
               </div>
             </div>
           )}
@@ -1248,4 +1318,23 @@ function PoliceAheadBanner({ hit }: { hit: { cam: Camera; d: number } }) {
       </div>
     </div>
   );
+}
+
+/** What to call a camera out loud: short, and the most useful word first. */
+function spokenName(c: Camera): string {
+  if (c.myReport) return `${c.name ?? "Hazard"} reported`;
+  switch (c.kind) {
+    case "alpr":
+      return c.brand === "Flock Safety" ? "Flock camera" : "Plate reader";
+    case "speed":
+      return "Speed camera";
+    case "traffic":
+      return "Traffic camera";
+    case "gunshot":
+      return "Gunshot detector";
+    case "incident":
+      return c.name ?? "Incident";
+    default:
+      return "Camera";
+  }
 }

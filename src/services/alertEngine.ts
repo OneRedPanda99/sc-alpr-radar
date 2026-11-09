@@ -43,6 +43,42 @@ export async function unlockAudio(): Promise<void> {
   osc.connect(gain).connect(c.destination);
   osc.start();
   osc.stop(c.currentTime + 0.02);
+  // iOS only lets speech start after a tap; an empty utterance unlocks it.
+  try {
+    if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(""));
+  } catch {
+    // No speech on this device; the tones still work.
+  }
+}
+
+/**
+ * Speak a short alert. Interrupts anything still being said: the newest
+ * alert is the one about the road you're on now.
+ */
+export function speak(text: string, delayMs = 350): void {
+  if (!("speechSynthesis" in window)) return;
+  window.setTimeout(() => {
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.05;
+      speechSynthesis.speak(u);
+    } catch {
+      // Ignore: speech is a bonus on top of the tone.
+    }
+  }, delayMs);
+}
+
+/** "400 feet", "a quarter mile", "1.2 miles": how distances sound aloud. */
+export function spokenDistance(meters: number): string {
+  const feet = meters * 3.28084;
+  if (feet < 1000) return `${Math.max(100, Math.round(feet / 100) * 100)} feet`;
+  const miles = meters / 1609.34;
+  if (miles < 0.35) return "a quarter mile";
+  if (miles < 0.65) return "half a mile";
+  if (miles < 0.9) return "three quarters of a mile";
+  if (miles < 1.15) return "1 mile";
+  return `${miles.toFixed(1)} miles`;
 }
 
 interface ToneOpts {

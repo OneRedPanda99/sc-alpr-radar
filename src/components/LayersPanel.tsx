@@ -19,9 +19,9 @@ const CAMERA_LAYERS: { key: BoolKey; label: string; color: string; hint?: string
   { key: "showPolice", label: "Police stations", color: KIND_COLORS.police },
   {
     key: "showPoliceReports",
-    label: "Police you reported",
+    label: "Your reports",
     color: "#3a86ff",
-    hint: "Spots you marked with the Police button. Kept on this device only and cleared after 20 minutes.",
+    hint: "Police and hazards you marked with the Report button. Kept on this device only; police clear after 20 minutes, hazards after an hour.",
   },
   { key: "showGunshot", label: "Gunshot detectors", color: KIND_COLORS.gunshot },
   { key: "showAircraft", label: "Aircraft overhead", color: KIND_COLORS.aircraft },
@@ -31,6 +31,12 @@ const CAMERA_LAYERS: { key: BoolKey; label: string; color: string; hint?: string
     label: "Unconfirmed sightings",
     color: "#ff4d4d",
     hint: "Cameras found by their WiFi signature but not checked by eye. They never sound an alert; tap one to confirm or dismiss it.",
+  },
+  {
+    key: "showWeather",
+    label: "Weather warnings",
+    color: "#2f80ed",
+    hint: "National Weather Service warnings that matter on the road: flooding, tornado, severe storms, ice, fog, wind and tropical systems.",
   },
   { key: "showFov", label: "Camera view cones", color: "#16e0b8" },
 ];

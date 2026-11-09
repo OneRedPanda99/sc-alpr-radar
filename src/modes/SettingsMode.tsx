@@ -66,6 +66,11 @@ export function SettingsMode() {
         </label>
 
         <Toggle
+          label='Speak alerts ("Flock camera in 400 feet")'
+          checked={s.spokenAlerts}
+          onChange={(v) => s.set("spokenAlerts", v)}
+        />
+        <Toggle
           label="Escalate as you get closer"
           checked={s.escalate}
           onChange={(v) => s.set("escalate", v)}
