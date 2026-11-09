@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Camera } from "@/types";
 import { MapView } from "@/components/MapView";
 import { LiveCameraVideo, isLiveCamera } from "@/components/LiveCameraImage";
+import { LiveCamList } from "@/components/LiveCamList";
 import { useCameraStore } from "@/store/cameraStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { makeIsShown } from "@/services/layers";
@@ -109,7 +110,7 @@ export function WatchMode() {
           <div className="watch-stats">
             <Stat label="Plate" value={counts.alpr ?? 0} tone="hot" />
             <Stat label="Traffic" value={counts.traffic ?? 0} tone="info" />
-            <Stat label="Live" value={incidents.length} tone="warm" />
+            <Stat label="Incidents" value={incidents.length} tone="warm" />
           </div>
         </header>
 
@@ -125,22 +126,11 @@ export function WatchMode() {
           ) : (
             <p className="tip">No live cameras nearby.</p>
           )}
-          <div className="watch-cam-list">
-            {liveCams.map(({ c, d }) => (
-              <button
-                key={c.id}
-                type="button"
-                className={`watch-cam ${watched?.id === c.id ? "on" : ""}`}
-                onClick={() => setWatchId(c.id)}
-                title={c.name}
-              >
-                <span className="watch-cam-name">{c.name}</span>
-                <span className="watch-cam-dist">
-                  {(d / 1609).toFixed(1)} mi
-                </span>
-              </button>
-            ))}
-          </div>
+          <LiveCamList
+            items={liveCams}
+            selectedId={watched?.id ?? null}
+            onPick={setWatchId}
+          />
         </section>
 
         <section className="watch-section">

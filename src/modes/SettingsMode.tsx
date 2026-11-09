@@ -66,11 +66,6 @@ export function SettingsMode() {
         </label>
 
         <Toggle
-          label="Mute alerts"
-          checked={s.muted}
-          onChange={(v) => s.set("muted", v)}
-        />
-        <Toggle
           label="Escalate as you get closer"
           checked={s.escalate}
           onChange={(v) => s.set("escalate", v)}
@@ -138,117 +133,17 @@ export function SettingsMode() {
       </section>
 
       <section className="setting-group">
-        <h3>Route avoidance</h3>
-        <p className="tip" style={{ marginTop: 0 }}>
-          Choose which cameras the router tries to detour around.
-        </p>
-        <Toggle
-          label="Avoid Flock cameras"
-          checked={s.avoidFlock}
-          onChange={(v) => s.set("avoidFlock", v)}
-        />
-        <Toggle
-          label="Avoid other ALPRs (Motorola, etc.)"
-          checked={s.avoidOtherAlpr}
-          onChange={(v) => s.set("avoidOtherAlpr", v)}
-        />
-        <Toggle
-          label="Avoid traffic / DOT cameras"
-          checked={s.avoidTraffic}
-          onChange={(v) => s.set("avoidTraffic", v)}
-        />
-        <Toggle
-          label="Avoid cameras I added"
-          checked={s.avoidCustom}
-          onChange={(v) => s.set("avoidCustom", v)}
-        />
-        <Toggle
-          label="Avoid community cameras"
-          checked={s.avoidCommunity}
-          onChange={(v) => s.set("avoidCommunity", v)}
-        />
-      </section>
-
-      <section className="setting-group">
         <h3>Map</h3>
-        <label className="setting">
-          <span>Basemap</span>
-          <div className="seg">
-            <button
-              className={s.basemap === "streets" ? "seg-on" : ""}
-              onClick={() => s.set("basemap", "streets")}
-            >
-              Streets
-            </button>
-            <button
-              className={s.basemap === "satellite" ? "seg-on" : ""}
-              onClick={() => s.set("basemap", "satellite")}
-            >
-              Satellite
-            </button>
-          </div>
-        </label>
         <Toggle
-          label="Show plate readers (ALPR)"
-          checked={s.showAlpr}
-          onChange={(v) => s.set("showAlpr", v)}
-        />
-        <Toggle
-          label="Show traffic / DOT cameras"
-          checked={s.showTraffic}
-          onChange={(v) => s.set("showTraffic", v)}
-        />
-        <Toggle
-          label="Show gunshot detectors (ShotSpotter)"
-          checked={s.showGunshot}
-          onChange={(v) => s.set("showGunshot", v)}
-        />
-        <Toggle
-          label="Show police stations"
-          checked={s.showPolice}
-          onChange={(v) => s.set("showPolice", v)}
-        />
-        <Toggle
-          label="Show police radio towers (FCC)"
-          checked={s.showRadio}
-          onChange={(v) => s.set("showRadio", v)}
-        />
-        <Toggle
-          label="Show unconfirmed RF sightings"
-          checked={s.showUnconfirmed}
-          onChange={(v) => s.set("showUnconfirmed", v)}
-        />
-        <Toggle
-          label="Show live road incidents"
-          checked={s.showIncidents}
-          onChange={(v) => s.set("showIncidents", v)}
-        />
-        <Toggle
-          label="Show aircraft overhead"
-          checked={s.showAircraft}
-          onChange={(v) => s.set("showAircraft", v)}
-        />
-        <p className="tip" style={{ marginTop: 0 }}>
-          Live crashes and hazards from SCDOT 511 and Waze, refreshed every ~10
-          minutes. Officers are usually on scene at a crash — but this is
-          incident data, not police dispatch. No SC agency publishes a live
-          dispatch feed, so an empty map does not mean an empty road.
-        </p>
-        <p className="tip" style={{ marginTop: 0 }}>
-          Unconfirmed sightings are cameras found by their WiFi signature but not
-          verified by eye. They never sound an alert — tap one to confirm or
-          dismiss it.
-        </p>
-        <Toggle
-          label="Rotate map to heading"
+          label="Rotate map to heading while driving"
           checked={s.headingUp}
           onChange={(v) => s.set("headingUp", v)}
         />
-        <Toggle
-          label="Show camera field-of-view cones"
-          checked={s.showFov}
-          onChange={(v) => s.set("showFov", v)}
-        />
+        <p className="tip" style={{ marginTop: 0 }}>
+          Which cameras and map details show is under <strong>Layers</strong> on the map.
+          Muting is the <strong>Sound</strong> button there, and the cameras routes steer
+          around are set in <strong>Plan</strong>.
+        </p>
       </section>
 
       <section className="setting-group">

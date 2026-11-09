@@ -223,6 +223,18 @@ button:disabled {
   border-color: var(--accent);
 }
 
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chip svg {
+  width: 15px;
+  height: 15px;
+  margin-left: -3px;
+}
+
 .big-btn {
   min-height: 56px;
   display: inline-flex;
@@ -260,55 +272,82 @@ button:disabled {
   animation: pulse-led 1.2s ease-in-out infinite;
 }
 
-/* --- Floating map buttons ------------------------------------------------- */
-.map-fabs {
+/* --- Map tools: one column, grouped by purpose ------------------------- */
+.map-tools {
   position: absolute;
   right: 12px;
-  bottom: max(18px, env(safe-area-inset-bottom));
+  /* Clear of the map attribution strip. */
+  bottom: max(34px, env(safe-area-inset-bottom));
   z-index: 5;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
-.fab {
-  width: 50px;
-  height: 50px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
+.tool-group {
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--border-strong);
-  background: rgba(10, 15, 22, 0.9);
-  color: var(--text);
+  border-radius: 16px;
+  background: rgba(10, 15, 22, 0.92);
   backdrop-filter: blur(10px);
   box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.map-tool {
+  width: 58px;
+  min-height: 54px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 2px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
   cursor: pointer;
-  transition: transform 0.12s ease, border-color 0.15s ease, background 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.fab svg {
-  width: 22px;
-  height: 22px;
+.map-tool + .map-tool {
+  border-top: 1px solid var(--border);
 }
 
-.fab:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.3);
+.map-tool svg {
+  width: 21px;
+  height: 21px;
 }
 
-.fab:active {
-  transform: scale(0.94);
+.map-tool:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
 }
 
-.fab.on {
+.map-tool:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.map-tool.on,
+.map-tool.on:hover:not(:disabled),
+.map-tool.on:active:not(:disabled) {
   background: var(--accent);
   color: var(--accent-ink);
-  border-color: var(--accent);
 }
 
+.map-tool:focus-visible {
+  outline-offset: -3px;
+}
+
+/* The compass only shows once the map is rotated; keep it out of the tool column. */
 .drive-map .map-compass {
   top: auto;
-  bottom: 200px;
-  right: 15px;
+  right: auto;
+  left: 12px;
+  bottom: max(34px, env(safe-area-inset-bottom));
   width: 44px;
   height: 44px;
 }
@@ -620,14 +659,14 @@ button:disabled {
   inset: 0;
 }
 
-.planner .map-fabs {
+.planner .map-tools {
   bottom: auto;
   top: max(12px, env(safe-area-inset-top));
 }
 
 .planner .layers-panel {
   bottom: auto;
-  top: calc(max(12px, env(safe-area-inset-top)) + 60px);
+  top: calc(max(12px, env(safe-area-inset-top)) + 66px);
 }
 
 .planner .osm-status {
@@ -1050,6 +1089,12 @@ button:disabled {
 }
 
 .avoid-label {
+  flex-basis: 100%;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-bottom: 2px;
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.06em;
@@ -1611,9 +1656,6 @@ button:disabled {
   white-space: pre-wrap;
 }
 
-.is-driving .map-controls {
-  bottom: 90px;
-}
 
 .stop-btn {
   min-height: 56px;
@@ -1712,8 +1754,8 @@ button:disabled {
   position: absolute;
   z-index: 6;
   left: 12px;
-  right: 74px;
-  bottom: max(18px, env(safe-area-inset-bottom));
+  right: 82px;
+  bottom: max(34px, env(safe-area-inset-bottom));
   max-width: 420px;
   max-height: 60%;
   overflow-y: auto;
@@ -1852,7 +1894,7 @@ button:disabled {
 }
 
 @media (min-width: 1000px) {
-  .fab-feed {
+  .tool-feed {
     display: none;
   }
 
@@ -2027,7 +2069,7 @@ button:disabled {
   position: absolute;
   z-index: 7;
   left: 10px;
-  right: 70px;
+  right: 82px;
   bottom: max(14px, env(safe-area-inset-bottom));
   max-width: 440px;
   padding: 12px 14px;
@@ -2077,6 +2119,7 @@ button:disabled {
   color: var(--muted);
   font-family: "JetBrains Mono", monospace;
   font-size: 12px;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -2114,6 +2157,63 @@ button:disabled {
 }
 
 /* The location card owns the bottom-left while it's open. */
-.drive-map:has(.look-card) .map-controls {
+.drive-map:has(.look-card) .map-compass {
   display: none;
+}
+
+.avoid-label small {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted-2);
+}
+
+.rail-trip-head h3 {
+  flex: 1;
+  min-width: 0;
+}
+
+/* In Drive the tool column stays reachable while layers are open. */
+.drive-map .layers-panel {
+  right: 82px;
+  bottom: max(34px, env(safe-area-inset-bottom));
+  width: min(380px, calc(100% - 94px));
+}
+
+/* The alert's facing / used-for lines go under the camera row, not beside it:
+   side by side they ran off the edge of a phone screen. */
+.alert-card {
+  flex-direction: column;
+}
+
+.alert-card-meta {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin-top: 8px;
+}
+
+/* While driving, the Stop button owns the bottom centre; panels sit above it. */
+.is-driving .feed-float,
+.is-driving .look-card {
+  bottom: calc(max(18px, env(safe-area-inset-bottom)) + 66px);
+}
+
+/* Short phones: a tighter tool column leaves room for the driving HUD above it. */
+@media (max-height: 700px) {
+  .map-tool {
+    min-height: 46px;
+    gap: 1px;
+    padding: 4px 2px;
+  }
+
+  .map-tool svg {
+    width: 19px;
+    height: 19px;
+  }
+
+  .map-tools {
+    gap: 6px;
+  }
 }
