@@ -36,6 +36,7 @@ export function kindVisible(kind: CameraKind, s: VisibilitySettings): boolean {
  */
 export function makeIsShown(s: VisibilitySettings): (c: Camera) => boolean {
   return (c) => {
+    if (c.policeReport) return s.showPoliceReports;
     if (!kindVisible(c.kind, s)) return false;
     if (c.unconfirmed && !s.showUnconfirmed) return false;
     if (
@@ -69,6 +70,10 @@ export function makeIsAlertable(
     if (!isShown(c)) return false;
     if (PASSIVE_KINDS.has(c.kind)) return false;
     if (c.unconfirmed) return s.alertUnconfirmed;
+    // A spot you just marked is behind you; alert on it when you come back.
+    if (c.policeReport && Date.now() - Date.parse(c.reportedAt ?? "") < 3 * 60 * 1000) {
+      return false;
+    }
     if (c.kind === "incident") return s.alertIncidents;
     if (c.kind === "traffic" || c.kind === "gunshot") return s.alertTraffic;
     return true;

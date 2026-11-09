@@ -6,6 +6,8 @@ export interface LiveCamItem {
   d: number;
   /** False when the camera is behind you on the drive. */
   ahead?: boolean;
+  /** Shown instead of the distance, e.g. when you'll appear on it. */
+  note?: string;
 }
 
 /** Nearby live cameras to switch between; shared by Drive and Overwatch. */
@@ -20,7 +22,7 @@ export function LiveCamList({
 }) {
   return (
     <ul className="feed-list">
-      {items.map(({ c, d, ahead }) => (
+      {items.map(({ c, d, ahead, note }) => (
         <li key={c.id}>
           <button
             type="button"
@@ -31,8 +33,12 @@ export function LiveCamList({
           >
             <span className="feed-list-name">{c.name ?? "SCDOT camera"}</span>
             <span className="feed-list-dist">
-              {formatDistance(d)}
-              {ahead === false && " behind"}
+              {note ?? (
+                <>
+                  {formatDistance(d)}
+                  {ahead === false && " behind"}
+                </>
+              )}
             </span>
           </button>
         </li>

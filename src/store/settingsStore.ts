@@ -25,6 +25,7 @@ function pickSettings(s: Settings): Settings {
     showUnconfirmed: s.showUnconfirmed,
     showIncidents: s.showIncidents,
     showAircraft: s.showAircraft,
+    showPoliceReports: s.showPoliceReports,
     alertTraffic: s.alertTraffic,
     alertUnconfirmed: s.alertUnconfirmed,
     alertIncidents: s.alertIncidents,

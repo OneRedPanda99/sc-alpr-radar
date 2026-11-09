@@ -16,6 +16,13 @@ import { aimBearingFor } from "@/services/symbols";
 import { LayersPanel } from "@/components/LayersPanel";
 import { PlaceInput } from "@/components/PlaceInput";
 import { LiveCamList } from "@/components/LiveCamList";
+import {
+  DEFAULT_LAG_MS,
+  RouteMeasure,
+  Track,
+  followTarget,
+  schedulePasses,
+} from "@/services/chase";
 import { Icon } from "@/components/Icon";
 import type { LatLng } from "@/types";
 import { useCameraStore } from "@/store/cameraStore";
@@ -41,6 +48,12 @@ import {
   reverseGeocode,
 } from "@/services/routing";
 import { KIND_LABELS } from "@/services/brand";
+import {
+  addReport,
+  freshness,
+  removeReport,
+  updateReport,
+} from "@/services/policeReports";
 import { makeIsAlertable, makeIsShown } from "@/services/layers";
 import { useMovingAircraft } from "@/hooks/useMovingAircraft";
 import {
@@ -83,24 +96,10 @@ interface NearHit {
   ahead: boolean;
 }
 
+/** Stream delays beyond this mean a stalled player, not a slow stream. */
+const MAX_TRUSTED_LAG_MS = 45000;
 /** How close counts as "arrived" at a stop or checkpoint. */
 const ARRIVE_METERS = 90;
-/** Start timing a pass once a live camera ahead is this close. */
-const PASS_TRACK_METERS = 1600;
-/** Keep showing the camera you passed this long, so you see yourself on it. */
-const PASS_HOLD_MS = 35000;
-
-interface PassTrack {
-  camId: string;
-  /** Closest approach so far, and when. */
-  minD: number;
-  minAt: number;
-  /** Predicted or actual moment of closest approach. */
-  at: number;
-  actual: boolean;
-  hint?: string;
-}
-
 /** Signed angle a→b in degrees, -180..180. */
 function signedDelta(a: number, b: number): number {
   return ((b - a + 540) % 360) - 180;
@@ -144,7 +143,7 @@ export function DriveMode({
   visible = true,
 }: DriveModeProps) {
   const wide = useWide();
-  const { grid, dataset, status, addCamera, updateCamera, removeCamera } =
+  const { grid, dataset, status, addCamera, updateCamera, removeCamera, refreshReports } =
     useCameraStore();
   const {
     alertDistanceFeet,
@@ -173,16 +172,17 @@ export function DriveMode({
   const [layersOpen, setLayersOpen] = useState(false);
   /** Phones: the live feed is a floating card you open on demand. */
   const [feedOpen, setFeedOpen] = useState(false);
-  /** null = follow the nearest live camera ahead automatically. */
+  /** null = Follow me: show the camera your delayed self is about to pass. */
   const [pinnedFeedId, setPinnedFeedId] = useState<string | null>(null);
   const [reached, setReached] = useState<Set<string>>(new Set());
   const [arrival, setArrival] = useState<{ label: string; note?: string; checkpoint?: boolean } | null>(null);
-  const [passTrack, setPassTrack] = useState<PassTrack | null>(null);
   /** A place you searched for or long-pressed, just to look at. */
   const [look, setLook] = useState<{ label: string; point: LatLng; token: number } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [clips, setClips] = useState<{ url: string; name: string; at: number }[]>([]);
+  /** The report you just made, for the cruiser / on foot / undo choice. */
+  const [marked, setMarked] = useState<{ id: string; onFoot: boolean } | null>(null);
   const { fix, error } = useGeolocation({ enabled: driving });
   useWakeLock(driving);
 
@@ -365,53 +365,134 @@ export function DriveMode({
       .sort((a, b) => Number(b.ahead) - Number(a.ahead) || a.d - b.d)
       .slice(0, 6);
   }, [here, routeLive, liveCams, fix?.heading]);
-  // Pass timing: lock on to the next live camera ahead, predict the moment
-  // of closest approach from speed, then pin the actual moment once the
-  // distance starts growing again.
-  const holding =
-    passTrack && Date.now() < passTrack.at + PASS_HOLD_MS ? passTrack : null;
+  // --- Police activity ahead (radar-detector style) -------------------------
+  const markPolice = () => {
+    if (!here) return;
+    const r = addReport(here);
+    refreshReports();
+    setMarked({ id: r.id, onFoot: false });
+  };
   useEffect(() => {
-    if (!driving || !fix) return;
-    const now = fix.timestamp || Date.now();
-    setPassTrack((cur) => {
-      const active = cur && now < cur.at + PASS_HOLD_MS ? cur : null;
-      const cam = active
-        ? liveCams.find((c) => c.id === active.camId)
-        : upcoming.find((u) => u.ahead && u.d < PASS_TRACK_METERS)?.c;
-      if (!cam) return active;
-      const d = haversineMeters(fix.point, cam);
-      const base: PassTrack =
-        active && active.camId === cam.id
-          ? active
-          : { camId: cam.id, minD: d, minAt: now, at: now, actual: false };
-      if (base.actual) return base;
-      const next = { ...base };
-      if (d <= next.minD) {
-        next.minD = d;
-        next.minAt = now;
-        const speed = fix.speed && fix.speed > 1 ? fix.speed : 13; // ~30 mph fallback
-        const along =
-          fix.heading == null ? d : d * Math.cos((bearingDelta(fix.heading, bearingDeg(fix.point, cam)) * Math.PI) / 180);
-        next.at = now + (Math.max(0, along) / speed) * 1000;
-        next.hint = passHint(cam, fix.heading, fix.point);
-      } else if (d > next.minD + 15) {
-        // Moving away: the closest approach has happened.
-        next.at = next.minAt;
-        next.actual = true;
+    if (!marked) return;
+    const t = window.setTimeout(() => setMarked(null), 8000);
+    return () => window.clearTimeout(t);
+  }, [marked]);
+
+  /**
+   * The nearest police sign worth a glance: a spot you reported on the road
+   * ahead, or a police aircraft / any aircraft circling nearby.
+   */
+  const policeAhead = useMemo(() => {
+    if (!driving || !fix || !dataset) return null;
+    let best: { cam: Camera; d: number } | null = null;
+    for (const c of dataset.cameras) {
+      const report = !!c.policeReport;
+      const air = c.kind === "aircraft" && (c.lawEnforcement || c.circling);
+      if (!report && !air) continue;
+      if (!isShown(c)) continue;
+      const d = haversineMeters(fix.point, c);
+      if (report) {
+        if (d > 5000) continue;
+        if (fix.heading != null) {
+          const rad = (bearingDelta(fix.heading, bearingDeg(fix.point, c)) * Math.PI) / 180;
+          if (rad > Math.PI / 2 || d * Math.sin(rad) > 400) continue;
+        }
+      } else if (d > 8000) {
+        continue;
       }
-      return next;
+      if (!best || d < best.d) best = { cam: c, d };
+    }
+    return best;
+  }, [driving, fix, dataset, isShown]);
+
+  // One chirp when a police aircraft or a circling one first shows up; your
+  // own reports already alert through the normal camera alerts.
+  const airAlertedRef = useRef(new Set<string>());
+  useEffect(() => {
+    const c = policeAhead?.cam;
+    if (!c || c.kind !== "aircraft" || muted) return;
+    const key = `${c.id}:${c.circling ? "circle" : "le"}`;
+    if (airAlertedRef.current.has(key)) return;
+    airAlertedRef.current.add(key);
+    playAlert({ intensity: 0.55, sound: alertSound });
+  }, [policeAhead, muted, alertSound]);
+
+  // --- Follow me: a delayed live feed of your own drive ----------------------
+  // Where you've been, so a delayed frame can be matched to your position then.
+  const trackRef = useRef(new Track());
+  // Last measured stream delay; every SCDOT stream runs about the same.
+  const lagRef = useRef(DEFAULT_LAG_MS);
+  const routeMeasure = useMemo(
+    () => (route ? new RouteMeasure(route.coordinates) : null),
+    [route],
+  );
+  const camMeasures = useMemo(
+    () => new Map<string, { m: number; off: number } | null>(),
+    // A fresh cache per route.
+    [routeMeasure],
+  );
+  // The delayed clock moves between GPS fixes too.
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (!driving) return;
+    trackRef.current.clear();
+    const t = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [driving]);
+  useEffect(() => {
+    if (driving && fix) trackRef.current.push(fix.timestamp || Date.now(), fix.point);
+  }, [driving, fix]);
+
+  const passes = useMemo(() => {
+    if (!driving || !fix) return [];
+    const pool = (routeLive ?? liveCams).filter((c) => haversineMeters(fix.point, c) < 7000);
+    const gpsSpeed = fix.speed != null && fix.speed >= 0 ? fix.speed : null;
+    return schedulePasses({
+      cams: pool,
+      track: trackRef.current,
+      now: clock,
+      here: fix.point,
+      heading: fix.heading,
+      speed: gpsSpeed ?? trackRef.current.speed(),
+      route: routeMeasure,
+      camMeasures,
     });
-  }, [driving, fix, liveCams, upcoming]);
+  }, [driving, fix, clock, routeLive, liveCams, routeMeasure, camMeasures]);
+  const following = driving ? followTarget(passes, clock - lagRef.current) : null;
 
   const feedCam =
     (pinnedFeedId && liveCams.find((c) => c.id === pinnedFeedId)) ||
-    (holding && liveCams.find((c) => c.id === holding.camId)) ||
+    following?.cam ||
     upcoming[0]?.c ||
     null;
+  const feedPassRec = feedCam ? passes.find((p) => p.cam.id === feedCam.id) : undefined;
   const feedPass: PassInfo | null =
-    holding && feedCam?.id === holding.camId
-      ? { at: holding.at, actual: holding.actual, hint: holding.hint }
+    feedPassRec && fix && Number.isFinite(feedPassRec.at)
+      ? {
+          at: feedPassRec.at,
+          actual: feedPassRec.actual,
+          hint: passHint(feedPassRec.cam, fix.heading, fix.point),
+          distanceAt: (t: number) => {
+            const p = trackRef.current.at(t);
+            return p ? haversineMeters(p, feedPassRec.cam) : null;
+          },
+        }
       : null;
+  // While driving, list the cameras in the order you'll see yourself on them.
+  const feedItems = driving
+    ? passes.slice(0, 6).map((p) => {
+        const shownIn = (p.at + lagRef.current - clock) / 1000;
+        return {
+          c: p.cam,
+          d: Math.abs(p.along),
+          note: !Number.isFinite(p.at)
+            ? formatDistance(p.along)
+            : shownIn > 0
+              ? `you in ~${Math.ceil(shownIn)}s`
+              : "played",
+        };
+      })
+    : upcoming;
   const handleClip = (url: string) =>
     setClips((c) => [{ url, name: feedCam?.name ?? "SCDOT camera", at: Date.now() }, ...c].slice(0, 12));
 
@@ -466,6 +547,7 @@ export function DriveMode({
   const handleStart = async () => {
     await unlockAudio();
     trackerRef.current.reset();
+    setSearchOpen(false);
     setDriving(true);
   };
 
@@ -559,9 +641,9 @@ export function DriveMode({
           className={`chip ${pinnedFeedId == null ? "on" : ""}`}
           aria-pressed={pinnedFeedId == null}
           onClick={() => setPinnedFeedId(null)}
-          title="Automatically show the nearest live camera ahead"
+          title="Shows each camera just as the delayed feed reaches your car, like a delayed live feed of your drive"
         >
-          Auto-follow
+          Follow me
         </button>
       </div>
       {feedCam ? (
@@ -573,6 +655,10 @@ export function DriveMode({
                 camera={feedCam}
                 pass={feedPass}
                 onClip={handleClip}
+                onLag={(ms) => {
+                  // A stalled or paused player stops meaning anything past this.
+                  lagRef.current = ms < MAX_TRUSTED_LAG_MS ? ms : DEFAULT_LAG_MS;
+                }}
               />
             ) : (
               <div className="feed-paused">Paused</div>
@@ -611,9 +697,9 @@ export function DriveMode({
           appear on screen and records the moment.
         </p>
       )}
-      {upcoming.length > 1 && (
+      {feedItems.length > 1 && (
         <LiveCamList
-          items={upcoming}
+          items={feedItems}
           selectedId={feedCam?.id ?? null}
           onPick={setPinnedFeedId}
         />
@@ -749,16 +835,19 @@ export function DriveMode({
             moving the map, what the map shows, and editing the camera data. */}
         <div className="map-tools" role="toolbar" aria-label="Map tools">
           <div className="tool-group" aria-label="Move the map">
-            <button
-              type="button"
-              className={`map-tool ${searchOpen ? "on" : ""}`}
-              onClick={() => setSearchOpen((v) => !v)}
-              aria-expanded={searchOpen}
-              title="Go to an address, place or coordinates"
-            >
-              <Icon name="search" />
-              <span>Find</span>
-            </button>
+            {/* Typing a search isn't a driving task; it's back once you stop. */}
+            {!driving && (
+              <button
+                type="button"
+                className={`map-tool ${searchOpen ? "on" : ""}`}
+                onClick={() => setSearchOpen((v) => !v)}
+                aria-expanded={searchOpen}
+                title="Go to an address, place or coordinates"
+              >
+                <Icon name="search" />
+                <span>Find</span>
+              </button>
+            )}
             <button
               type="button"
               className="map-tool"
@@ -804,8 +893,18 @@ export function DriveMode({
               <span>{muted ? "Muted" : "Sound"}</span>
             </button>
           </div>
-          {!driving && (
-            <div className="tool-group" aria-label="Edit cameras">
+          <div className="tool-group" aria-label="Report">
+            <button
+              type="button"
+              className="map-tool tool-police"
+              onClick={markPolice}
+              disabled={!here}
+              title={here ? "Mark police at your location (kept on this device, clears in 20 min)" : "Location is off"}
+            >
+              <Icon name="shield" />
+              <span>Police</span>
+            </button>
+            {!driving && (
               <button
                 type="button"
                 className={`map-tool ${addKind ? "on" : ""}`}
@@ -818,11 +917,47 @@ export function DriveMode({
                 <Icon name="plus" />
                 <span>{addKind ? "Cancel" : "Add"}</span>
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {layersOpen && <LayersPanel onClose={() => setLayersOpen(false)} />}
+
+        {marked && (
+          <div className="report-toast" role="status">
+            <span className="report-toast-title">
+              <Icon name="shield" /> Police marked here
+            </span>
+            <div className="report-toast-actions">
+              {[false, true].map((onFoot) => (
+                <button
+                  key={String(onFoot)}
+                  type="button"
+                  className={`chip ${marked.onFoot === onFoot ? "on" : ""}`}
+                  aria-pressed={marked.onFoot === onFoot}
+                  onClick={() => {
+                    updateReport(marked.id, { onFoot });
+                    refreshReports();
+                    setMarked({ ...marked, onFoot });
+                  }}
+                >
+                  {onFoot ? "On foot" : "Cruiser"}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => {
+                  removeReport(marked.id);
+                  refreshReports();
+                  setMarked(null);
+                }}
+              >
+                Undo
+              </button>
+            </div>
+          </div>
+        )}
 
         {addKind && (
           <div className="add-banner">
@@ -946,6 +1081,8 @@ export function DriveMode({
             </div>
           )}
 
+          {policeAhead && <PoliceAheadBanner hit={policeAhead} />}
+
           {driving && nextStop && (
             <div className={`next-stop ${nextStop.stop.checkpoint ? "check" : ""}`}>
               <span className="next-stop-badge">
@@ -1053,6 +1190,29 @@ export function DriveMode({
         {feedPanel}
       </aside>
       )}
+    </div>
+  );
+}
+
+function PoliceAheadBanner({ hit }: { hit: { cam: Camera; d: number } }) {
+  const { cam, d } = hit;
+  const air = cam.kind === "aircraft";
+  const age = air ? 0 : Date.now() - Date.parse(cam.reportedAt ?? "");
+  const title = air
+    ? `${cam.lawEnforcement ? "Police aircraft" : "Aircraft"}${cam.circling ? " circling" : ""}`
+    : `${cam.name ?? "Police"} reported ahead`;
+  const when = air ? "live" : `${freshness(age)}, ${Math.max(0, Math.round(age / 60000))} min ago`;
+  return (
+    <div className={`police-ahead ${air ? "air" : ""}`} role="status">
+      <span className="police-ahead-icon" aria-hidden="true">
+        {air ? "🚁" : "🚔"}
+      </span>
+      <div className="police-ahead-text">
+        <span className="police-ahead-title">{title}</span>
+        <span className="police-ahead-sub">
+          {formatDistance(d)} {air ? "away" : "ahead"} · {when}
+        </span>
+      </div>
     </div>
   );
 }

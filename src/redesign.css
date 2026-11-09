@@ -859,7 +859,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 10px 14px calc(12px + env(safe-area-inset-bottom));
+  /* The tab bar below already clears the iPhone home indicator. */
+  padding: 10px 14px 12px;
   border-top: 1px solid var(--border);
   background: var(--bg-2);
   border-radius: 0 0 var(--radius) var(--radius);
@@ -1968,6 +1969,44 @@ button:disabled {
   margin-top: 6px;
 }
 
+/* Where you were when the frame on screen was shot, camera in the middle. */
+.pass-where {
+  margin-top: 6px;
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pass-strip {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.16) 50%, rgba(255, 255, 255, 0.05));
+}
+
+.pass-strip-cam {
+  position: absolute;
+  left: 50%;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--warm);
+}
+
+.pass-strip-car {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(7, 11, 16, 0.9);
+  transition: left 0.25s linear;
+}
+
 .live-cam.on-screen {
   box-shadow: inset 0 0 0 4px var(--accent);
   animation: on-screen 0.8s ease-in-out infinite alternate;
@@ -2194,11 +2233,7 @@ button:disabled {
   margin-top: 8px;
 }
 
-/* While driving, the Stop button owns the bottom centre; panels sit above it. */
-.is-driving .feed-float,
-.is-driving .look-card {
-  bottom: calc(max(18px, env(safe-area-inset-bottom)) + 66px);
-}
+
 
 /* Short phones: a tighter tool column leaves room for the driving HUD above it. */
 @media (max-height: 700px) {
@@ -2215,5 +2250,227 @@ button:disabled {
 
   .map-tools {
     gap: 6px;
+  }
+}
+
+/* Pass info under the video rather than over the car you're looking for. */
+.pass-overlay.below {
+  position: static;
+  border-width: 1px 0 0;
+  border-radius: 0;
+  background: var(--panel-solid);
+}
+
+.pass-overlay.below.now {
+  background: rgba(4, 40, 33, 0.95);
+}
+
+/* Narrow players (phones): keep the badge and buttons from colliding. */
+@media (max-width: 480px) {
+  .live-cam-badge {
+    padding: 3px 6px;
+    letter-spacing: 0.04em;
+  }
+
+  .live-cam-lag {
+    margin-left: 2px;
+    padding-left: 5px;
+  }
+
+  .live-cam-controls,
+  .live-cam-transport {
+    gap: 4px;
+  }
+
+  .live-cam-btn {
+    min-width: 28px;
+    height: 28px;
+    padding: 0 6px;
+    font-size: 11px;
+  }
+}
+
+/* --- iPhone: notch and home indicator -------------------------------------
+   The tab bar already pads for the home indicator, so panels above it don't
+   add it again. In landscape (dashboard mount) the notch sits on a side, so
+   anything pinned to a side edge keeps clear of it. */
+.detail-card {
+  bottom: 34px;
+  right: 82px;
+  max-height: calc(100% - 140px);
+  overflow-y: auto;
+}
+
+/* A live camera in a 72px thumbnail is unwatchable: give it the card's width. */
+.detail-card:has(.live-cam) {
+  flex-direction: column;
+}
+
+.detail-card:has(.live-cam) .detail-media {
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  aspect-ratio: 16 / 9;
+}
+
+.detail-card:has(.live-cam) .detail-body {
+  padding-right: 0;
+}
+
+.detail-close {
+  z-index: 4;
+}
+
+.route-panel {
+  padding-bottom: 14px;
+}
+
+.map-tools,
+.drive-map .layers-panel {
+  margin-right: env(safe-area-inset-right);
+}
+
+.drive-hud {
+  padding-left: max(14px, env(safe-area-inset-left));
+  padding-right: max(14px, env(safe-area-inset-right));
+}
+
+.drive-map .map-compass,
+.feed-float,
+.look-card,
+.map-search {
+  margin-left: env(safe-area-inset-left);
+}
+
+.tabbar {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+.planner-sheet {
+  margin-left: env(safe-area-inset-left);
+}
+
+/* While driving, the Stop button owns the bottom centre; panels sit above it. */
+.is-driving .feed-float,
+.is-driving .look-card,
+.is-driving .detail-card {
+  bottom: calc(max(18px, env(safe-area-inset-bottom)) + 66px);
+}
+
+.detail-card:has(.live-cam) .live-cam-controls {
+  right: 46px;
+}
+
+/* Phone on its side (dashboard mount): alerts on the left half, the live
+   camera on the right half next to the tools, the map visible between. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .drive-hud {
+    right: auto;
+    width: min(420px, 50%);
+  }
+
+  .feed-float {
+    left: auto;
+    right: 82px;
+    top: max(10px, env(safe-area-inset-top));
+    width: min(400px, calc(50% - 94px));
+    max-height: none;
+  }
+
+  .is-driving .feed-float {
+    bottom: max(18px, env(safe-area-inset-bottom));
+  }
+
+  .stop-btn {
+    left: 25%;
+  }
+}
+
+/* --- Police activity ------------------------------------------------------ */
+.report-toast {
+  position: absolute;
+  z-index: 8;
+  left: max(12px, env(safe-area-inset-left));
+  right: 82px;
+  bottom: max(34px, env(safe-area-inset-bottom));
+  max-width: 420px;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--panel-solid);
+  border: 1px solid rgba(58, 134, 255, 0.6);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  animation: pop-in 0.18s var(--ease);
+}
+
+.is-driving .report-toast {
+  bottom: calc(max(18px, env(safe-area-inset-bottom)) + 66px);
+}
+
+.report-toast-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.report-toast-title svg {
+  width: 18px;
+  height: 18px;
+  color: #3a86ff;
+}
+
+.report-toast-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.police-ahead {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(58, 134, 255, 0.65);
+  box-shadow: inset 4px 0 0 #3a86ff;
+}
+
+.police-ahead.air {
+  border-color: rgba(255, 209, 102, 0.6);
+  box-shadow: inset 4px 0 0 #ffd166;
+}
+
+.police-ahead-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.police-ahead-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.police-ahead-title {
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.police-ahead-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Phones: the banners under the camera alert stop short of the tool column. */
+@media (max-width: 600px) {
+  .is-driving .drive-hud > :not(.alert-card) {
+    margin-right: 68px;
   }
 }
