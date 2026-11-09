@@ -16,6 +16,13 @@ import { aimBearingFor } from "@/services/symbols";
 import { LayersPanel } from "@/components/LayersPanel";
 import { PlaceInput } from "@/components/PlaceInput";
 import { LiveCamList } from "@/components/LiveCamList";
+import {
+  DEFAULT_LAG_MS,
+  RouteMeasure,
+  Track,
+  followTarget,
+  schedulePasses,
+} from "@/services/chase";
 import { Icon } from "@/components/Icon";
 import type { LatLng } from "@/types";
 import { useCameraStore } from "@/store/cameraStore";
@@ -83,24 +90,10 @@ interface NearHit {
   ahead: boolean;
 }
 
+/** Stream delays beyond this mean a stalled player, not a slow stream. */
+const MAX_TRUSTED_LAG_MS = 45000;
 /** How close counts as "arrived" at a stop or checkpoint. */
 const ARRIVE_METERS = 90;
-/** Start timing a pass once a live camera ahead is this close. */
-const PASS_TRACK_METERS = 1600;
-/** Keep showing the camera you passed this long, so you see yourself on it. */
-const PASS_HOLD_MS = 35000;
-
-interface PassTrack {
-  camId: string;
-  /** Closest approach so far, and when. */
-  minD: number;
-  minAt: number;
-  /** Predicted or actual moment of closest approach. */
-  at: number;
-  actual: boolean;
-  hint?: string;
-}
-
 /** Signed angle a→b in degrees, -180..180. */
 function signedDelta(a: number, b: number): number {
   return ((b - a + 540) % 360) - 180;
@@ -173,11 +166,10 @@ export function DriveMode({
   const [layersOpen, setLayersOpen] = useState(false);
   /** Phones: the live feed is a floating card you open on demand. */
   const [feedOpen, setFeedOpen] = useState(false);
-  /** null = follow the nearest live camera ahead automatically. */
+  /** null = Follow me: show the camera your delayed self is about to pass. */
   const [pinnedFeedId, setPinnedFeedId] = useState<string | null>(null);
   const [reached, setReached] = useState<Set<string>>(new Set());
   const [arrival, setArrival] = useState<{ label: string; note?: string; checkpoint?: boolean } | null>(null);
-  const [passTrack, setPassTrack] = useState<PassTrack | null>(null);
   /** A place you searched for or long-pressed, just to look at. */
   const [look, setLook] = useState<{ label: string; point: LatLng; token: number } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -365,53 +357,82 @@ export function DriveMode({
       .sort((a, b) => Number(b.ahead) - Number(a.ahead) || a.d - b.d)
       .slice(0, 6);
   }, [here, routeLive, liveCams, fix?.heading]);
-  // Pass timing: lock on to the next live camera ahead, predict the moment
-  // of closest approach from speed, then pin the actual moment once the
-  // distance starts growing again.
-  const holding =
-    passTrack && Date.now() < passTrack.at + PASS_HOLD_MS ? passTrack : null;
+  // --- Follow me: a delayed live feed of your own drive ----------------------
+  // Where you've been, so a delayed frame can be matched to your position then.
+  const trackRef = useRef(new Track());
+  // Last measured stream delay; every SCDOT stream runs about the same.
+  const lagRef = useRef(DEFAULT_LAG_MS);
+  const routeMeasure = useMemo(
+    () => (route ? new RouteMeasure(route.coordinates) : null),
+    [route],
+  );
+  const camMeasures = useMemo(
+    () => new Map<string, { m: number; off: number } | null>(),
+    // A fresh cache per route.
+    [routeMeasure],
+  );
+  // The delayed clock moves between GPS fixes too.
+  const [clock, setClock] = useState(() => Date.now());
   useEffect(() => {
-    if (!driving || !fix) return;
-    const now = fix.timestamp || Date.now();
-    setPassTrack((cur) => {
-      const active = cur && now < cur.at + PASS_HOLD_MS ? cur : null;
-      const cam = active
-        ? liveCams.find((c) => c.id === active.camId)
-        : upcoming.find((u) => u.ahead && u.d < PASS_TRACK_METERS)?.c;
-      if (!cam) return active;
-      const d = haversineMeters(fix.point, cam);
-      const base: PassTrack =
-        active && active.camId === cam.id
-          ? active
-          : { camId: cam.id, minD: d, minAt: now, at: now, actual: false };
-      if (base.actual) return base;
-      const next = { ...base };
-      if (d <= next.minD) {
-        next.minD = d;
-        next.minAt = now;
-        const speed = fix.speed && fix.speed > 1 ? fix.speed : 13; // ~30 mph fallback
-        const along =
-          fix.heading == null ? d : d * Math.cos((bearingDelta(fix.heading, bearingDeg(fix.point, cam)) * Math.PI) / 180);
-        next.at = now + (Math.max(0, along) / speed) * 1000;
-        next.hint = passHint(cam, fix.heading, fix.point);
-      } else if (d > next.minD + 15) {
-        // Moving away: the closest approach has happened.
-        next.at = next.minAt;
-        next.actual = true;
-      }
-      return next;
+    if (!driving) return;
+    trackRef.current.clear();
+    const t = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [driving]);
+  useEffect(() => {
+    if (driving && fix) trackRef.current.push(fix.timestamp || Date.now(), fix.point);
+  }, [driving, fix]);
+
+  const passes = useMemo(() => {
+    if (!driving || !fix) return [];
+    const pool = (routeLive ?? liveCams).filter((c) => haversineMeters(fix.point, c) < 7000);
+    const gpsSpeed = fix.speed != null && fix.speed >= 0 ? fix.speed : null;
+    return schedulePasses({
+      cams: pool,
+      track: trackRef.current,
+      now: clock,
+      here: fix.point,
+      heading: fix.heading,
+      speed: gpsSpeed ?? trackRef.current.speed(),
+      route: routeMeasure,
+      camMeasures,
     });
-  }, [driving, fix, liveCams, upcoming]);
+  }, [driving, fix, clock, routeLive, liveCams, routeMeasure, camMeasures]);
+  const following = driving ? followTarget(passes, clock - lagRef.current) : null;
 
   const feedCam =
     (pinnedFeedId && liveCams.find((c) => c.id === pinnedFeedId)) ||
-    (holding && liveCams.find((c) => c.id === holding.camId)) ||
+    following?.cam ||
     upcoming[0]?.c ||
     null;
+  const feedPassRec = feedCam ? passes.find((p) => p.cam.id === feedCam.id) : undefined;
   const feedPass: PassInfo | null =
-    holding && feedCam?.id === holding.camId
-      ? { at: holding.at, actual: holding.actual, hint: holding.hint }
+    feedPassRec && fix && Number.isFinite(feedPassRec.at)
+      ? {
+          at: feedPassRec.at,
+          actual: feedPassRec.actual,
+          hint: passHint(feedPassRec.cam, fix.heading, fix.point),
+          distanceAt: (t: number) => {
+            const p = trackRef.current.at(t);
+            return p ? haversineMeters(p, feedPassRec.cam) : null;
+          },
+        }
       : null;
+  // While driving, list the cameras in the order you'll see yourself on them.
+  const feedItems = driving
+    ? passes.slice(0, 6).map((p) => {
+        const shownIn = (p.at + lagRef.current - clock) / 1000;
+        return {
+          c: p.cam,
+          d: Math.abs(p.along),
+          note: !Number.isFinite(p.at)
+            ? formatDistance(p.along)
+            : shownIn > 0
+              ? `you in ~${Math.ceil(shownIn)}s`
+              : "played",
+        };
+      })
+    : upcoming;
   const handleClip = (url: string) =>
     setClips((c) => [{ url, name: feedCam?.name ?? "SCDOT camera", at: Date.now() }, ...c].slice(0, 12));
 
@@ -559,9 +580,9 @@ export function DriveMode({
           className={`chip ${pinnedFeedId == null ? "on" : ""}`}
           aria-pressed={pinnedFeedId == null}
           onClick={() => setPinnedFeedId(null)}
-          title="Automatically show the nearest live camera ahead"
+          title="Shows each camera just as the delayed feed reaches your car, like a delayed live feed of your drive"
         >
-          Auto-follow
+          Follow me
         </button>
       </div>
       {feedCam ? (
@@ -573,6 +594,10 @@ export function DriveMode({
                 camera={feedCam}
                 pass={feedPass}
                 onClip={handleClip}
+                onLag={(ms) => {
+                  // A stalled or paused player stops meaning anything past this.
+                  lagRef.current = ms < MAX_TRUSTED_LAG_MS ? ms : DEFAULT_LAG_MS;
+                }}
               />
             ) : (
               <div className="feed-paused">Paused</div>
@@ -611,9 +636,9 @@ export function DriveMode({
           appear on screen and records the moment.
         </p>
       )}
-      {upcoming.length > 1 && (
+      {feedItems.length > 1 && (
         <LiveCamList
-          items={upcoming}
+          items={feedItems}
           selectedId={feedCam?.id ?? null}
           onPick={setPinnedFeedId}
         />

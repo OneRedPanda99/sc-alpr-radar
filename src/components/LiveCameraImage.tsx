@@ -57,6 +57,8 @@ export interface PassInfo {
   actual: boolean;
   /** Where in the picture to look, e.g. "coming toward the camera". */
   hint?: string;
+  /** How far you were from the camera at a given wall-clock time. */
+  distanceAt?: (t: number) => number | null;
 }
 
 export function LiveCameraVideo({
@@ -65,6 +67,7 @@ export function LiveCameraVideo({
   fullscreenTarget,
   pass,
   onClip,
+  onLag,
 }: {
   camera: Camera;
   onError?: () => void;
@@ -74,7 +77,11 @@ export function LiveCameraVideo({
   pass?: PassInfo | null;
   /** Receives a recorded clip (blob URL) of the moment you pass. */
   onClip?: (url: string) => void;
+  /** Receives the measured delay behind real time, for scheduling other feeds. */
+  onLag?: (ms: number) => void;
 }) {
+  const onLagRef = useRef(onLag);
+  onLagRef.current = onLag;
   const videoRef = useRef<HTMLVideoElement>(null);
   /** Latest playlist edge (media seconds) and the wall time it appeared. */
   const edgeRef = useRef<{ media: number; wall: number } | null>(null);
@@ -185,6 +192,7 @@ export function LiveCameraVideo({
       const fw = e.wall - (e.media - v.currentTime) * 1000;
       setFrameWall(fw);
       setLagMs(Date.now() - fw);
+      onLagRef.current?.(Date.now() - fw);
     }, 250);
     return () => window.clearInterval(t);
   }, [camera.streamUrl]);
@@ -453,118 +461,126 @@ export function LiveCameraVideo({
     );
   }
 
+  // Over the picture it hides the very car you're looking for, so it sits
+  // under the video, except in fullscreen where there is no "under".
+  const overlay = pass && (
+    <PassOverlay
+      pass={pass}
+      frameWall={frameWall}
+      lagMs={lagMs}
+      onReplay={replayPass}
+      recording={!!recorderRef.current}
+      below={!isFull}
+    />
+  );
+
   return (
-    <div
-      className={`live-cam ${zoom > 1 ? "zoomed" : ""} ${
-        pass && frameWall != null && Math.abs(frameWall - pass.at) < ON_SCREEN_WINDOW_MS
-          ? "on-screen"
-          : ""
-      }`}
-      ref={wrapRef}
-      onPointerDown={onPanStart}
-      onPointerMove={onPanMove}
-      onPointerUp={onPanEnd}
-      onPointerCancel={onPanEnd}
-    >
-      <video
-        ref={videoRef}
-        muted
-        playsInline
-        autoPlay
-        style={{
-          filter: dimHeadlights ? DIM_FILTER : undefined,
-          transform: `scale(${zoom}) translate(${pan.x}%, ${pan.y}%)`,
-        }}
-        onPlaying={() => {
-          setPlaying(true);
-          setPaused(false);
-        }}
-        onWaiting={() => setPlaying(false)}
-        // Track the element's real state, not just our own clicks. Autoplay can
-        // be refused and a backgrounded tab can pause on its own, which
-        // previously left the badge reading LIVE over a frozen frame and made
-        // the Pause button do the opposite of its label.
-        onPause={() => setPaused(true)}
-        onPlay={() => setPaused(false)}
-        aria-label={camera.name ?? "Live traffic camera"}
-      />
-      <div className={`live-cam-badge ${paused ? "still" : ""}`}>
-        {!paused && <span className="live-dot" aria-hidden="true" />}
-        {paused ? "PAUSED" : playing ? "LIVE" : "CONNECTING"}
-        {lagMs != null && playing && !paused && (
-          <span className="live-cam-lag" title="Estimated delay behind real time">
-            ~{Math.round(lagMs / 1000)}s behind
-          </span>
-        )}
-      </div>
-      {pass && (
-        <PassOverlay
-          pass={pass}
-          frameWall={frameWall}
-          lagMs={lagMs}
-          onReplay={replayPass}
-          recording={!!recorderRef.current}
+    <>
+      <div
+        className={`live-cam ${zoom > 1 ? "zoomed" : ""} ${
+          pass && frameWall != null && Math.abs(frameWall - pass.at) < ON_SCREEN_WINDOW_MS
+            ? "on-screen"
+            : ""
+        }`}
+        ref={wrapRef}
+        onPointerDown={onPanStart}
+        onPointerMove={onPanMove}
+        onPointerUp={onPanEnd}
+        onPointerCancel={onPanEnd}
+      >
+        <video
+          ref={videoRef}
+          muted
+          playsInline
+          autoPlay
+          style={{
+            filter: dimHeadlights ? DIM_FILTER : undefined,
+            transform: `scale(${zoom}) translate(${pan.x}%, ${pan.y}%)`,
+          }}
+          onPlaying={() => {
+            setPlaying(true);
+            setPaused(false);
+          }}
+          onWaiting={() => setPlaying(false)}
+          // Track the element's real state, not just our own clicks. Autoplay can
+          // be refused and a backgrounded tab can pause on its own, which
+          // previously left the badge reading LIVE over a frozen frame and made
+          // the Pause button do the opposite of its label.
+          onPause={() => setPaused(true)}
+          onPlay={() => setPaused(false)}
+          aria-label={camera.name ?? "Live traffic camera"}
         />
-      )}
+        <div className={`live-cam-badge ${paused ? "still" : ""}`}>
+          {!paused && <span className="live-dot" aria-hidden="true" />}
+          {paused ? "PAUSED" : playing ? "LIVE" : "CONNECTING"}
+          {lagMs != null && playing && !paused && (
+            <span className="live-cam-lag" title="Estimated delay behind real time">
+              {Math.round(lagMs / 1000)}s delay
+            </span>
+          )}
+        </div>
+        {isFull && overlay}
 
-      <div className="live-cam-controls">
-        <button
-          type="button"
-          className={`live-cam-btn ${dimHeadlights ? "on" : ""}`}
-          onClick={() => setSetting("dimHeadlights", !dimHeadlights)}
-          aria-pressed={dimHeadlights}
-          title="Headlight dimmer — cuts glare on night feeds"
-        >
-          Dimmer
-        </button>
-        <button
-          type="button"
-          className={`live-cam-btn ${zoom > 1 ? "on" : ""}`}
-          onClick={cycleZoom}
-          title="Digital zoom — magnifies, does not add detail"
-        >
-          {zoom}×
-        </button>
-        <button
-          type="button"
-          className="live-cam-btn"
-          onClick={toggleFullscreen}
-          aria-label={isFull ? "Exit fullscreen" : "Fullscreen"}
-          title={isFull ? "Exit fullscreen" : "Fullscreen"}
-        >
-          {isFull ? "✕" : "⛶"}
-        </button>
-      </div>
+        <div className="live-cam-controls">
+          <button
+            type="button"
+            className={`live-cam-btn ${dimHeadlights ? "on" : ""}`}
+            onClick={() => setSetting("dimHeadlights", !dimHeadlights)}
+            aria-pressed={dimHeadlights}
+            title="Headlight dimmer — cuts glare on night feeds"
+          >
+            Dimmer
+          </button>
+          <button
+            type="button"
+            className={`live-cam-btn ${zoom > 1 ? "on" : ""}`}
+            onClick={cycleZoom}
+            title="Digital zoom — magnifies, does not add detail"
+          >
+            {zoom}×
+          </button>
+          <button
+            type="button"
+            className="live-cam-btn"
+            onClick={toggleFullscreen}
+            aria-label={isFull ? "Exit fullscreen" : "Fullscreen"}
+            title={isFull ? "Exit fullscreen" : "Fullscreen"}
+          >
+            {isFull ? "✕" : "⛶"}
+          </button>
+        </div>
 
-      {/* Scrubbing the last few seconds is the only real way to study a
-          specific car: paused you can look, live it is gone in one frame. */}
-      <div className="live-cam-transport">
-        <button
-          type="button"
-          className="live-cam-btn"
-          onClick={() => nudge(-3)}
-          title="Back 3 seconds"
-        >
-          ⏴3s
-        </button>
-        <button
-          type="button"
-          className="live-cam-btn wide"
-          onClick={togglePause}
-          title={paused ? "Resume" : "Pause to inspect a frame"}
-        >
-          {paused ? "▶ Resume" : "⏸ Pause"}
-        </button>
-        <button
-          type="button"
-          className="live-cam-btn"
-          onClick={goLive}
-          title="Jump back to live"
-        >
-          Live
-        </button>
+        {/* Scrubbing the last few seconds is the only real way to study a
+            specific car: paused you can look, live it is gone in one frame. */}
+        <div className="live-cam-transport">
+          <button
+            type="button"
+            className="live-cam-btn"
+            onClick={() => nudge(-3)}
+            title="Back 3 seconds"
+          >
+            ⏴3s
+          </button>
+          <button
+            type="button"
+            className="live-cam-btn wide"
+            onClick={togglePause}
+            title={paused ? "Resume" : "Pause to inspect a frame"}
+          >
+            {paused ? "▶ Resume" : "⏸ Pause"}
+          </button>
+          <button
+            type="button"
+            className="live-cam-btn"
+            onClick={goLive}
+            title="Jump back to live"
+          >
+            Live
+          </button>
+        </div>
       </div>
-    </div>
+      {!isFull && overlay}
+    </>
   );
 }
 
@@ -574,12 +590,14 @@ function PassOverlay({
   lagMs,
   onReplay,
   recording,
+  below,
 }: {
   pass: PassInfo;
   frameWall: number | null;
   lagMs: number | null;
   onReplay: () => void;
   recording: boolean;
+  below: boolean;
 }) {
   const untilPass = (pass.at - Date.now()) / 1000;
   // Seconds until the frame showing your pass reaches the screen.
@@ -600,13 +618,38 @@ function PassOverlay({
     text = "Your pass has played";
   }
   const past = untilShown != null && untilShown < -ON_SCREEN_WINDOW_MS / 1000;
+  // Where you were at the moment this frame was shot: the honest version of
+  // "where's my car in the picture", since the cameras' aim isn't known.
+  const frameD = frameWall != null ? pass.distanceAt?.(frameWall) ?? null : null;
+  const before = frameWall != null && frameWall < pass.at;
+  const signed = frameD == null ? null : before ? -frameD : frameD;
+  const STRIP_M = 500;
   return (
-    <div className={`pass-overlay ${tone}`} role="status">
+    <div className={`pass-overlay ${tone} ${below ? "below" : ""}`} role="status">
       <div className="pass-text">
         {recording && <span className="rec-dot" aria-label="Recording" />}
         {text}
       </div>
       {pass.hint && <div className="pass-hint">{pass.hint}</div>}
+      {signed != null && Math.abs(signed) < 2000 && (
+        <div className="pass-where">
+          <span className="pass-where-text">
+            In this frame you're{" "}
+            {Math.abs(signed) < 40
+              ? "at the camera"
+              : `${Math.round(Math.abs(signed) / 10) * 10} m ${signed < 0 ? "before" : "past"} it`}
+          </span>
+          <span className="pass-strip" aria-hidden="true">
+            <span className="pass-strip-cam" />
+            <span
+              className="pass-strip-car"
+              style={{
+                left: `${50 + 50 * Math.max(-1, Math.min(1, signed / STRIP_M))}%`,
+              }}
+            />
+          </span>
+        </div>
+      )}
       {past && (
         <button type="button" className="live-cam-btn" onClick={onReplay}>
           Replay my pass
