@@ -48,6 +48,7 @@ import {
   reverseGeocode,
 } from "@/services/routing";
 import { KIND_LABELS } from "@/services/brand";
+import { deadEndNear } from "@/services/deadEnds";
 import {
   addReport,
   freshness,
@@ -416,6 +417,23 @@ export function DriveMode({
     airAlertedRef.current.add(key);
     playAlert({ intensity: 0.55, sound: alertSound });
   }, [policeAhead, muted, alertSound]);
+
+  // --- No-go roads: don't turn into something with no way out ---------------
+  const noGo = useMemo(() => {
+    if (!driving || !fix || !osmLayers.includes("deadends")) return null;
+    const inside = deadEndNear(fix.point, 12);
+    if (inside) return { inside: true, name: String(inside.properties?.name ?? "") };
+    if (fix.heading == null) return null;
+    // A point a few seconds up the road.
+    const ahead = 70;
+    const rad = (fix.heading * Math.PI) / 180;
+    const p = {
+      lat: fix.point.lat + (ahead * Math.cos(rad)) / 110540,
+      lon: fix.point.lon + (ahead * Math.sin(rad)) / (111320 * Math.cos((fix.point.lat * Math.PI) / 180)),
+    };
+    const hit = deadEndNear(p, 18);
+    return hit ? { inside: false, name: String(hit.properties?.name ?? "") } : null;
+  }, [driving, fix, osmLayers]);
 
   // --- Follow me: a delayed live feed of your own drive ----------------------
   // Where you've been, so a delayed frame can be matched to your position then.
@@ -1077,6 +1095,21 @@ export function DriveMode({
                 {currentStep.distanceMeters > 0 && formatDistance(currentStep.distanceMeters)}
                 {route &&
                   ` · ${formatDuration(route.durationSeconds)} total · ${route.cameraCount} cams on ${plan?.name}`}
+              </div>
+            </div>
+          )}
+
+          {noGo && (
+            <div className="no-go" role="alert">
+              <span className="no-go-icon" aria-hidden="true">⛔</span>
+              <div className="police-ahead-text">
+                <span className="police-ahead-title">
+                  {noGo.inside ? "You're on a no-go road" : "No-go road ahead"}
+                </span>
+                <span className="police-ahead-sub">
+                  {noGo.name ? `${noGo.name}: ` : ""}
+                  {noGo.inside ? "dead end, the way out is back the way you came" : "dead end, no way through"}
+                </span>
               </div>
             </div>
           )}

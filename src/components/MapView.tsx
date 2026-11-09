@@ -313,8 +313,18 @@ export function MapView({
         layout: { "line-cap": "round" },
         paint: {
           "line-color": ["get", "color"],
-          "line-width": 3,
-          "line-opacity": 0.55,
+          // No-go roads have to read at a glance; the rest is background detail.
+          // (MapLibre only allows zoom at the top of an interpolate.)
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            12,
+            ["case", ["==", ["get", "category"], "deadends"], 3, 3],
+            16,
+            ["case", ["==", ["get", "category"], "deadends"], 6, 3],
+          ],
+          "line-opacity": ["case", ["==", ["get", "category"], "deadends"], 0.8, 0.55],
         },
       });
       // Reuse whatever font the basemap ships, so labels never request a

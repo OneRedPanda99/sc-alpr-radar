@@ -2474,3 +2474,21 @@ button:disabled {
     margin-right: 68px;
   }
 }
+
+/* No-go road warning: same shape as the police banner, in red. */
+.no-go {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(60, 8, 8, 0.92);
+  border: 1px solid rgba(255, 59, 59, 0.7);
+  box-shadow: inset 4px 0 0 #ff3b3b;
+}
+
+.no-go-icon {
+  font-size: 20px;
+  line-height: 1;
+}
