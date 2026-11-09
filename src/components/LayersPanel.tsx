@@ -7,15 +7,25 @@ type BoolKey = {
   [K in keyof Settings]: Settings[K] extends boolean ? K : never;
 }[keyof Settings];
 
-const CAMERA_LAYERS: { key: BoolKey; label: string; color: string }[] = [
+const CAMERA_LAYERS: { key: BoolKey; label: string; color: string; hint?: string }[] = [
   { key: "showAlpr", label: "Plate readers", color: KIND_COLORS.alpr },
   { key: "showTraffic", label: "Traffic & speed cams", color: KIND_COLORS.traffic },
-  { key: "showIncidents", label: "Live incidents", color: KIND_COLORS.incident },
+  {
+    key: "showIncidents",
+    label: "Live incidents",
+    color: KIND_COLORS.incident,
+    hint: "Crashes and hazards from SCDOT 511 and Waze, refreshed about every 10 minutes. Not police dispatch, so an empty map doesn't mean an empty road.",
+  },
   { key: "showPolice", label: "Police stations", color: KIND_COLORS.police },
   { key: "showGunshot", label: "Gunshot detectors", color: KIND_COLORS.gunshot },
   { key: "showAircraft", label: "Aircraft overhead", color: KIND_COLORS.aircraft },
   { key: "showRadio", label: "Public-safety radio", color: KIND_COLORS.radio },
-  { key: "showUnconfirmed", label: "Unconfirmed sightings", color: "#ff4d4d" },
+  {
+    key: "showUnconfirmed",
+    label: "Unconfirmed sightings",
+    color: "#ff4d4d",
+    hint: "Cameras found by their WiFi signature but not checked by eye. They never sound an alert; tap one to confirm or dismiss it.",
+  },
   { key: "showFov", label: "Camera view cones", color: "#16e0b8" },
 ];
 
@@ -65,6 +75,7 @@ export function LayersPanel({ onClose }: { onClose: () => void }) {
             className={`layer-toggle ${settings[l.key] ? "on" : ""}`}
             aria-pressed={!!settings[l.key]}
             onClick={() => set(l.key, !settings[l.key])}
+            title={l.hint}
           >
             <span className="layer-dot" style={{ background: l.color }} />
             {l.label}

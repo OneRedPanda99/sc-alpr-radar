@@ -1754,8 +1754,8 @@ button:disabled {
   position: absolute;
   z-index: 6;
   left: 12px;
-  right: 74px;
-  bottom: max(18px, env(safe-area-inset-bottom));
+  right: 82px;
+  bottom: max(34px, env(safe-area-inset-bottom));
   max-width: 420px;
   max-height: 60%;
   overflow-y: auto;
@@ -2069,7 +2069,7 @@ button:disabled {
   position: absolute;
   z-index: 7;
   left: 10px;
-  right: 70px;
+  right: 82px;
   bottom: max(14px, env(safe-area-inset-bottom));
   max-width: 440px;
   padding: 12px 14px;
@@ -2119,6 +2119,7 @@ button:disabled {
   color: var(--muted);
   font-family: "JetBrains Mono", monospace;
   font-size: 12px;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -2178,4 +2179,41 @@ button:disabled {
   right: 82px;
   bottom: max(34px, env(safe-area-inset-bottom));
   width: min(380px, calc(100% - 94px));
+}
+
+/* The alert's facing / used-for lines go under the camera row, not beside it:
+   side by side they ran off the edge of a phone screen. */
+.alert-card {
+  flex-direction: column;
+}
+
+.alert-card-meta {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin-top: 8px;
+}
+
+/* While driving, the Stop button owns the bottom centre; panels sit above it. */
+.is-driving .feed-float,
+.is-driving .look-card {
+  bottom: calc(max(18px, env(safe-area-inset-bottom)) + 66px);
+}
+
+/* Short phones: a tighter tool column leaves room for the driving HUD above it. */
+@media (max-height: 700px) {
+  .map-tool {
+    min-height: 46px;
+    gap: 1px;
+    padding: 4px 2px;
+  }
+
+  .map-tool svg {
+    width: 19px;
+    height: 19px;
+  }
+
+  .map-tools {
+    gap: 6px;
+  }
 }

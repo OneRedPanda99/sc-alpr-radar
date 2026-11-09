@@ -15,6 +15,7 @@ import {
 import { aimBearingFor } from "@/services/symbols";
 import { LayersPanel } from "@/components/LayersPanel";
 import { PlaceInput } from "@/components/PlaceInput";
+import { LiveCamList } from "@/components/LiveCamList";
 import { Icon } from "@/components/Icon";
 import type { LatLng } from "@/types";
 import { useCameraStore } from "@/store/cameraStore";
@@ -611,23 +612,11 @@ export function DriveMode({
         </p>
       )}
       {upcoming.length > 1 && (
-        <ul className="feed-list">
-          {upcoming.map(({ c, d, ahead }) => (
-            <li key={c.id}>
-              <button
-                type="button"
-                className={feedCam?.id === c.id ? "on" : ""}
-                onClick={() => setPinnedFeedId(c.id)}
-              >
-                <span className="feed-list-name">{c.name ?? "SCDOT camera"}</span>
-                <span className="feed-list-dist">
-                  {formatDistance(d)}
-                  {!ahead && " behind"}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <LiveCamList
+          items={upcoming}
+          selectedId={feedCam?.id ?? null}
+          onPick={setPinnedFeedId}
+        />
       )}
     </div>
   );
@@ -792,6 +781,7 @@ export function DriveMode({
               <Icon name="layers" />
               <span>Layers</span>
             </button>
+            {driving && (
             <button
               type="button"
               className={`map-tool tool-feed ${feedOpen ? "on" : ""}`}
@@ -802,6 +792,7 @@ export function DriveMode({
               <Icon name="video" />
               <span>Live</span>
             </button>
+            )}
             <button
               type="button"
               className={`map-tool ${muted ? "" : "on"}`}
@@ -866,7 +857,7 @@ export function DriveMode({
           />
         )}
 
-        {feedOpen && !wide && <div className="feed-float">{feedPanel}</div>}
+        {feedOpen && driving && !wide && <div className="feed-float">{feedPanel}</div>}
 
         <div className="drive-hud">
           {!driving ? (
@@ -928,11 +919,6 @@ export function DriveMode({
                     "Start driving"
                   )}
                 </button>
-                {!trip && !wide && (
-                  <button type="button" className="ghost-btn tall" onClick={onOpenPlanner}>
-                    <Icon name="route" /> Plan a trip
-                  </button>
-                )}
               </div>
             </div>
           ) : nearestAhead ? (
@@ -1059,12 +1045,9 @@ export function DriveMode({
           <section className="rail-empty">
             <h3>No trip loaded</h3>
             <p className="tip">
-              Plan a trip with stops, checkpoints and backup plans, and it shows here while you
-              drive.
+              Plan a trip with stops, checkpoints and backup plans in the Plan tab, and it shows
+              here while you drive.
             </p>
-            <button type="button" className="ghost-btn tall" onClick={onOpenPlanner}>
-              <Icon name="route" /> Plan a trip
-            </button>
           </section>
         )}
         {feedPanel}
