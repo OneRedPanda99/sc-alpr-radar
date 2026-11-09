@@ -82,91 +82,32 @@ const PATHS: Record<IconName, JSX.Element> = {
       <circle cx="12" cy="9.8" r="2.3" {...stroke} />
     </>
   ),
-  // Eye / overwatch
-  watch: (
-    <>
-      <path
-        d="M2.5 12s3.6-6 9.5-6 9.5 6 9.5 6-3.6 6-9.5 6-9.5-6-9.5-6Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-      <circle cx="12" cy="12" r="2.6" fill="currentColor" />
-    </>
-  ),
-  // Steering-wheel / drive
-  drive: (
-    <>
-      <circle
-        cx="12"
-        cy="12"
-        r="8.5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-      />
-      <circle cx="12" cy="12" r="2.1" fill="currentColor" />
-      <path
-        d="M12 12 L12 3.5"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-      <path
-        d="M12 3.5 L16 6"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        fill="none"
-      />
-    </>
-  ),
-  // Route — pin + dashed path
+  // Tab bar: all line icons on the same 1.9 stroke as the rest of the set.
+  // Drive: navigation arrow, the universal "you, moving" mark.
+  drive: <path d="M12 3 19.5 20 12 16.2 4.5 20Z" {...stroke} />,
+  // Plan: folded map with a pin on it.
   route: (
     <>
-      <path
-        d="M5 20 C 5 13, 12 13, 12 7"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeDasharray="0.5 3"
-      />
-      <path
-        d="M12 7.5 C 12 5.3, 14 4.2, 15.6 5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-      <path
-        d="M19 5.2 a 3.2 3.2 0 0 1 0 6.4 a 3.2 3.2 0 0 1 -2.3 -1"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-      <circle cx="19" cy="8.4" r="1.1" fill="currentColor" />
+      <path d="M3.5 6.5 9 4.5l6 2 5.5-2v13l-5.5 2-6-2-5.5 2Z" {...stroke} />
+      <path d="M9 4.5v13M15 6.5v4" {...stroke} />
+      <path d="M17.5 17.8s-2.6-2.4-2.6-4.3a2.6 2.6 0 0 1 5.2 0c0 1.9-2.6 4.3-2.6 4.3Z" {...stroke} />
     </>
   ),
-  // Settings — gear
+  // Overwatch: video camera.
+  watch: (
+    <>
+      <rect x="2.5" y="6.5" width="13" height="11" rx="2.5" {...stroke} />
+      <path d="m15.5 10.5 6-3.5v10l-6-3.5" {...stroke} />
+      <circle cx="6.5" cy="10" r="1.1" fill="currentColor" />
+    </>
+  ),
+  // Settings: sliders.
   settings: (
     <>
-      <circle
-        cx="12"
-        cy="12"
-        r="3"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-      />
-      <path
-        d="M12 2.5 v 2.6 M12 18.9 v 2.6 M21.5 12 h -2.6 M5.1 12 H 2.5 M18.7 5.3 l -1.8 1.8 M7.1 16.9 l -1.8 1.8 M18.7 18.7 l -1.8 -1.8 M7.1 7.1 L 5.3 5.3"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
+      <path d="M4 7h9M17 7h3M4 17h3M11 17h9M4 12h3.5M11.5 12H20" {...stroke} />
+      <circle cx="15" cy="7" r="2" {...stroke} />
+      <circle cx="9" cy="17" r="2" {...stroke} />
+      <circle cx="9.5" cy="12" r="2" {...stroke} />
     </>
   ),
   // Bearing arrow
