@@ -20,7 +20,8 @@ export type IconName =
   | "sound"
   | "mute"
   | "note"
-  | "check";
+  | "check"
+  | "shield";
 
 const stroke = {
   fill: "none",
@@ -76,6 +77,13 @@ const PATHS: Record<IconName, JSX.Element> = {
   ),
   note: <path d="M5 4h10l4 4v12H5zM15 4v4h4M8.5 12h7M8.5 16h5" {...stroke} />,
   check: <path d="m5 12.5 4.5 4.5L19 7.5" {...stroke} />,
+  // Police: a badge shield with a star.
+  shield: (
+    <>
+      <path d="M12 3 19 6v5.5c0 4.4-3 7.8-7 9.5-4-1.7-7-5.1-7-9.5V6Z" {...stroke} />
+      <path d="m12 8.6 1 2.1 2.3.3-1.7 1.6.4 2.3-2-1.1-2 1.1.4-2.3-1.7-1.6 2.3-.3Z" fill="currentColor" />
+    </>
+  ),
   pin: (
     <>
       <path d="M12 21s-6.5-6.2-6.5-11.2a6.5 6.5 0 0 1 13 0C18.5 14.8 12 21 12 21Z" {...stroke} />

@@ -1,4 +1,5 @@
 import type { Camera } from "@/types";
+import { bearingDeg, haversineMeters } from "@/services/geo";
 
 /**
  * Live aircraft from airplanes.live.
@@ -26,6 +27,49 @@ const MAX_ALT_FT = 12_000;
  */
 const LAW_ENFORCEMENT =
   /\b(POLICE|SHERIFF|STATE PATROL|HIGHWAY PATROL|PUBLIC SAFETY|LAW ENFORCE\w*|MARSHAL|CONSTABLE|F\.?B\.?I|DEPT OF JUSTICE|HOMELAND|CUSTOMS|BORDER PROTECTION|AVIATION UNIT|SLED)\b/i;
+
+/**
+ * Circling detection. An aircraft orbiting one spot is the clearest sign of
+ * something happening on the ground, police-operated or not, and it doesn't
+ * depend on reading any radio traffic.
+ */
+const CIRCLE_WINDOW_MS = 6 * 60 * 1000;
+/** Total turning, in degrees, that counts as having gone round. */
+const CIRCLE_TURN_DEG = 300;
+/** All positions in the window stay within this of their centre. */
+const CIRCLE_RADIUS_M = 3000;
+
+interface Sample {
+  t: number;
+  lat: number;
+  lon: number;
+  track?: number;
+}
+
+/** Recent positions per aircraft, kept across polls. */
+const history = new Map<string, Sample[]>();
+
+function signedTurn(a: number, b: number): number {
+  return ((b - a + 540) % 360) - 180;
+}
+
+/** Minutes it has been circling, or null if it isn't. */
+function circlingFor(samples: Sample[]): number | null {
+  if (samples.length < 5) return null;
+  const lat = samples.reduce((n, p) => n + p.lat, 0) / samples.length;
+  const lon = samples.reduce((n, p) => n + p.lon, 0) / samples.length;
+  if (samples.some((p) => haversineMeters(p, { lat, lon }) > CIRCLE_RADIUS_M)) return null;
+  // Prefer reported track; fall back to the bearing between fixes.
+  const headings = samples
+    .map((p, i) =>
+      p.track ?? (i > 0 ? bearingDeg(samples[i - 1], p) : undefined),
+    )
+    .filter((h): h is number => h != null);
+  let turn = 0;
+  for (let i = 1; i < headings.length; i++) turn += signedTurn(headings[i - 1], headings[i]);
+  if (Math.abs(turn) < CIRCLE_TURN_DEG) return null;
+  return Math.max(1, Math.round((samples[samples.length - 1].t - samples[0].t) / 60000));
+}
 
 interface RawAircraft {
   hex: string;
@@ -75,6 +119,8 @@ export async function fetchAircraft(
     if (!res.ok) return null;
     const json = await res.json();
     const out: Camera[] = [];
+    const now = Date.now();
+    const seen = new Set<string>();
 
     for (const a of (json.ac ?? []) as RawAircraft[]) {
       if (!Number.isFinite(a.lat) || !Number.isFinite(a.lon)) continue;
@@ -85,6 +131,12 @@ export async function fetchAircraft(
       if (!onGround && (!Number.isFinite(alt) || alt > MAX_ALT_FT)) continue;
 
       const { label, le } = classify(a);
+
+      seen.add(a.hex);
+      const samples = (history.get(a.hex) ?? []).filter((p) => now - p.t < CIRCLE_WINDOW_MS);
+      samples.push({ t: now, lat: a.lat!, lon: a.lon!, track: Number.isFinite(a.track) ? a.track : undefined });
+      history.set(a.hex, samples);
+      const circleMin = onGround ? null : circlingFor(samples);
       const tail = a.r ?? a.hex.toUpperCase();
       const speed = Number.isFinite(a.gs) ? ` · ${Math.round(a.gs!)} kt` : "";
       const owner = a.ownOp ? ` · ${a.ownOp}` : "";
@@ -101,8 +153,10 @@ export async function fetchAircraft(
         directions: Number.isFinite(a.track) ? [a.track!] : [],
         omni: !Number.isFinite(a.track),
         purpose:
-          `${label} — ${onGround ? "on ground" : `${alt.toLocaleString()} ft`}` +
+          `${label}${circleMin ? `, circling here for ${circleMin} min` : ""} — ` +
+          `${onGround ? "on ground" : `${alt.toLocaleString()} ft`}` +
           `${speed}${owner}`,
+        circling: circleMin != null,
         fovHalfAngle: 30,
         lawEnforcement: le,
         trackDeg: Number.isFinite(a.track) ? a.track : undefined,
@@ -110,6 +164,8 @@ export async function fetchAircraft(
         fixedAt: Date.now(),
       });
     }
+    // Forget aircraft that have left the area.
+    for (const hex of history.keys()) if (!seen.has(hex)) history.delete(hex);
     return out;
   } catch {
     return null;

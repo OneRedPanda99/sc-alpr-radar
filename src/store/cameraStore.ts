@@ -18,6 +18,7 @@ import {
 } from "@/services/storage";
 import { fetchCommunityCameras } from "@/services/community";
 import { fetchAircraft } from "@/services/aircraft";
+import { reportsAsCameras } from "@/services/policeReports";
 import {
   fetchLiveIncidents,
   fetchRadioSites,
@@ -67,6 +68,8 @@ interface CameraState {
   removeCamera: (id: string) => Promise<void>;
   refreshIncidents: () => Promise<void>;
   refreshAircraft: (lat: number, lon: number) => Promise<void>;
+  /** Re-merge after a "Police here" report is added, changed or expires. */
+  refreshReports: () => void;
 }
 
 /** Pack cameras with attribution cleaned and same-pole duplicates merged. */
@@ -102,6 +105,8 @@ function combine(
     ...extra,
     ...incidents,
     ...aircraft,
+    // Read fresh each time so expired reports drop out on any re-merge.
+    ...reportsAsCameras(),
   ];
   return {
     generatedAt: pack?.generatedAt ?? new Date().toISOString(),
@@ -308,6 +313,18 @@ export const useCameraStore = create<CameraState>((set, get) => ({
       grid: new CameraGrid(next.cameras),
       status: next.count > 0 ? "ready" : "empty",
     });
+  },
+
+  refreshReports: () => {
+    const next = combine(
+      get().pack,
+      get().community,
+      get().custom,
+      get().extra,
+      get().incidents,
+      get().aircraft,
+    );
+    set({ dataset: next, grid: new CameraGrid(next.cameras) });
   },
 
   refreshIncidents: async () => {

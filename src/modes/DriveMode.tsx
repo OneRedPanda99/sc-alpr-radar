@@ -48,6 +48,12 @@ import {
   reverseGeocode,
 } from "@/services/routing";
 import { KIND_LABELS } from "@/services/brand";
+import {
+  addReport,
+  freshness,
+  removeReport,
+  updateReport,
+} from "@/services/policeReports";
 import { makeIsAlertable, makeIsShown } from "@/services/layers";
 import { useMovingAircraft } from "@/hooks/useMovingAircraft";
 import {
@@ -137,7 +143,7 @@ export function DriveMode({
   visible = true,
 }: DriveModeProps) {
   const wide = useWide();
-  const { grid, dataset, status, addCamera, updateCamera, removeCamera } =
+  const { grid, dataset, status, addCamera, updateCamera, removeCamera, refreshReports } =
     useCameraStore();
   const {
     alertDistanceFeet,
@@ -175,6 +181,8 @@ export function DriveMode({
   const [searchOpen, setSearchOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [clips, setClips] = useState<{ url: string; name: string; at: number }[]>([]);
+  /** The report you just made, for the cruiser / on foot / undo choice. */
+  const [marked, setMarked] = useState<{ id: string; onFoot: boolean } | null>(null);
   const { fix, error } = useGeolocation({ enabled: driving });
   useWakeLock(driving);
 
@@ -357,6 +365,58 @@ export function DriveMode({
       .sort((a, b) => Number(b.ahead) - Number(a.ahead) || a.d - b.d)
       .slice(0, 6);
   }, [here, routeLive, liveCams, fix?.heading]);
+  // --- Police activity ahead (radar-detector style) -------------------------
+  const markPolice = () => {
+    if (!here) return;
+    const r = addReport(here);
+    refreshReports();
+    setMarked({ id: r.id, onFoot: false });
+  };
+  useEffect(() => {
+    if (!marked) return;
+    const t = window.setTimeout(() => setMarked(null), 8000);
+    return () => window.clearTimeout(t);
+  }, [marked]);
+
+  /**
+   * The nearest police sign worth a glance: a spot you reported on the road
+   * ahead, or a police aircraft / any aircraft circling nearby.
+   */
+  const policeAhead = useMemo(() => {
+    if (!driving || !fix || !dataset) return null;
+    let best: { cam: Camera; d: number } | null = null;
+    for (const c of dataset.cameras) {
+      const report = !!c.policeReport;
+      const air = c.kind === "aircraft" && (c.lawEnforcement || c.circling);
+      if (!report && !air) continue;
+      if (!isShown(c)) continue;
+      const d = haversineMeters(fix.point, c);
+      if (report) {
+        if (d > 5000) continue;
+        if (fix.heading != null) {
+          const rad = (bearingDelta(fix.heading, bearingDeg(fix.point, c)) * Math.PI) / 180;
+          if (rad > Math.PI / 2 || d * Math.sin(rad) > 400) continue;
+        }
+      } else if (d > 8000) {
+        continue;
+      }
+      if (!best || d < best.d) best = { cam: c, d };
+    }
+    return best;
+  }, [driving, fix, dataset, isShown]);
+
+  // One chirp when a police aircraft or a circling one first shows up; your
+  // own reports already alert through the normal camera alerts.
+  const airAlertedRef = useRef(new Set<string>());
+  useEffect(() => {
+    const c = policeAhead?.cam;
+    if (!c || c.kind !== "aircraft" || muted) return;
+    const key = `${c.id}:${c.circling ? "circle" : "le"}`;
+    if (airAlertedRef.current.has(key)) return;
+    airAlertedRef.current.add(key);
+    playAlert({ intensity: 0.55, sound: alertSound });
+  }, [policeAhead, muted, alertSound]);
+
   // --- Follow me: a delayed live feed of your own drive ----------------------
   // Where you've been, so a delayed frame can be matched to your position then.
   const trackRef = useRef(new Track());
@@ -487,6 +547,7 @@ export function DriveMode({
   const handleStart = async () => {
     await unlockAudio();
     trackerRef.current.reset();
+    setSearchOpen(false);
     setDriving(true);
   };
 
@@ -774,16 +835,19 @@ export function DriveMode({
             moving the map, what the map shows, and editing the camera data. */}
         <div className="map-tools" role="toolbar" aria-label="Map tools">
           <div className="tool-group" aria-label="Move the map">
-            <button
-              type="button"
-              className={`map-tool ${searchOpen ? "on" : ""}`}
-              onClick={() => setSearchOpen((v) => !v)}
-              aria-expanded={searchOpen}
-              title="Go to an address, place or coordinates"
-            >
-              <Icon name="search" />
-              <span>Find</span>
-            </button>
+            {/* Typing a search isn't a driving task; it's back once you stop. */}
+            {!driving && (
+              <button
+                type="button"
+                className={`map-tool ${searchOpen ? "on" : ""}`}
+                onClick={() => setSearchOpen((v) => !v)}
+                aria-expanded={searchOpen}
+                title="Go to an address, place or coordinates"
+              >
+                <Icon name="search" />
+                <span>Find</span>
+              </button>
+            )}
             <button
               type="button"
               className="map-tool"
@@ -829,8 +893,18 @@ export function DriveMode({
               <span>{muted ? "Muted" : "Sound"}</span>
             </button>
           </div>
-          {!driving && (
-            <div className="tool-group" aria-label="Edit cameras">
+          <div className="tool-group" aria-label="Report">
+            <button
+              type="button"
+              className="map-tool tool-police"
+              onClick={markPolice}
+              disabled={!here}
+              title={here ? "Mark police at your location (kept on this device, clears in 20 min)" : "Location is off"}
+            >
+              <Icon name="shield" />
+              <span>Police</span>
+            </button>
+            {!driving && (
               <button
                 type="button"
                 className={`map-tool ${addKind ? "on" : ""}`}
@@ -843,11 +917,47 @@ export function DriveMode({
                 <Icon name="plus" />
                 <span>{addKind ? "Cancel" : "Add"}</span>
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {layersOpen && <LayersPanel onClose={() => setLayersOpen(false)} />}
+
+        {marked && (
+          <div className="report-toast" role="status">
+            <span className="report-toast-title">
+              <Icon name="shield" /> Police marked here
+            </span>
+            <div className="report-toast-actions">
+              {[false, true].map((onFoot) => (
+                <button
+                  key={String(onFoot)}
+                  type="button"
+                  className={`chip ${marked.onFoot === onFoot ? "on" : ""}`}
+                  aria-pressed={marked.onFoot === onFoot}
+                  onClick={() => {
+                    updateReport(marked.id, { onFoot });
+                    refreshReports();
+                    setMarked({ ...marked, onFoot });
+                  }}
+                >
+                  {onFoot ? "On foot" : "Cruiser"}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => {
+                  removeReport(marked.id);
+                  refreshReports();
+                  setMarked(null);
+                }}
+              >
+                Undo
+              </button>
+            </div>
+          </div>
+        )}
 
         {addKind && (
           <div className="add-banner">
@@ -971,6 +1081,8 @@ export function DriveMode({
             </div>
           )}
 
+          {policeAhead && <PoliceAheadBanner hit={policeAhead} />}
+
           {driving && nextStop && (
             <div className={`next-stop ${nextStop.stop.checkpoint ? "check" : ""}`}>
               <span className="next-stop-badge">
@@ -1078,6 +1190,29 @@ export function DriveMode({
         {feedPanel}
       </aside>
       )}
+    </div>
+  );
+}
+
+function PoliceAheadBanner({ hit }: { hit: { cam: Camera; d: number } }) {
+  const { cam, d } = hit;
+  const air = cam.kind === "aircraft";
+  const age = air ? 0 : Date.now() - Date.parse(cam.reportedAt ?? "");
+  const title = air
+    ? `${cam.lawEnforcement ? "Police aircraft" : "Aircraft"}${cam.circling ? " circling" : ""}`
+    : `${cam.name ?? "Police"} reported ahead`;
+  const when = air ? "live" : `${freshness(age)}, ${Math.max(0, Math.round(age / 60000))} min ago`;
+  return (
+    <div className={`police-ahead ${air ? "air" : ""}`} role="status">
+      <span className="police-ahead-icon" aria-hidden="true">
+        {air ? "🚁" : "🚔"}
+      </span>
+      <div className="police-ahead-text">
+        <span className="police-ahead-title">{title}</span>
+        <span className="police-ahead-sub">
+          {formatDistance(d)} {air ? "away" : "ahead"} · {when}
+        </span>
+      </div>
     </div>
   );
 }

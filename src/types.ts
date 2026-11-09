@@ -85,6 +85,10 @@ export interface Camera {
    * carry plenty of non-police traffic that shouldn't be implied to be police.
    */
   lawEnforcement?: boolean;
+  /** A "Police here" spot you marked yourself (kind `incident`). */
+  policeReport?: boolean;
+  /** An aircraft that has been circling one spot for the last few minutes. */
+  circling?: boolean;
   /** Heading in degrees, for `aircraft`. */
   trackDeg?: number;
   /** Ground speed in knots, for `aircraft`. */
@@ -227,6 +231,8 @@ export interface Settings {
   showIncidents: boolean;
   /** Show/hide live aircraft overhead (ADS-B). */
   showAircraft: boolean;
+  /** Show/hide your own "Police here" reports. */
+  showPoliceReports: boolean;
   /** Play alert sound when approaching a live incident. */
   alertIncidents: boolean;
   /** Also play alert sound for traffic/CCTV + gunshot detectors. */

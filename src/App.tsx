@@ -34,6 +34,7 @@ export default function App() {
   const hydrateSettings = useSettingsStore((s) => s.hydrate);
   const refreshIncidents = useCameraStore((s) => s.refreshIncidents);
   const refreshAircraft = useCameraStore((s) => s.refreshAircraft);
+  const refreshReports = useCameraStore((s) => s.refreshReports);
   const showAircraft = useSettingsStore((s) => s.showAircraft);
 
   const go = useCallback((m: AppMode) => {
@@ -90,6 +91,13 @@ export default function App() {
       document.removeEventListener("visibilitychange", tick);
     };
   }, [refreshIncidents]);
+
+  // "Police here" reports age out after 20 minutes; re-merge so they drop off
+  // the map and stop alerting on time.
+  useEffect(() => {
+    const timer = setInterval(refreshReports, 60 * 1000);
+    return () => clearInterval(timer);
+  }, [refreshReports]);
 
   const handleDrive = useCallback(
     (trip: Trip, planId: string) => {

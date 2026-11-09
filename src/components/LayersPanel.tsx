@@ -17,6 +17,12 @@ const CAMERA_LAYERS: { key: BoolKey; label: string; color: string; hint?: string
     hint: "Crashes and hazards from SCDOT 511 and Waze, refreshed about every 10 minutes. Not police dispatch, so an empty map doesn't mean an empty road.",
   },
   { key: "showPolice", label: "Police stations", color: KIND_COLORS.police },
+  {
+    key: "showPoliceReports",
+    label: "Police you reported",
+    color: "#3a86ff",
+    hint: "Spots you marked with the Police button. Kept on this device only and cleared after 20 minutes.",
+  },
   { key: "showGunshot", label: "Gunshot detectors", color: KIND_COLORS.gunshot },
   { key: "showAircraft", label: "Aircraft overhead", color: KIND_COLORS.aircraft },
   { key: "showRadio", label: "Public-safety radio", color: KIND_COLORS.radio },

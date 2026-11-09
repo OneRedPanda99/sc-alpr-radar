@@ -55,6 +55,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showUnconfirmed: true,
   showIncidents: true,
   showAircraft: true,
+  showPoliceReports: true,
   // Alert on everything detectable by default; each kind can be turned off
   // individually. Police stations and radio towers are the exception — see
   // PASSIVE_KINDS.
