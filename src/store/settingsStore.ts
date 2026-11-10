@@ -34,6 +34,7 @@ function pickSettings(s: Settings): Settings {
     spokenAlerts: s.spokenAlerts,
     uiScale: s.uiScale,
     basemap: s.basemap,
+    mapTheme: s.mapTheme,
     avoidFlock: s.avoidFlock,
     avoidOtherAlpr: s.avoidOtherAlpr,
     avoidTraffic: s.avoidTraffic,

@@ -7,6 +7,7 @@ import { LayersPanel } from "@/components/LayersPanel";
 import { Icon } from "@/components/Icon";
 import { makeIsShown } from "@/services/layers";
 import { useCameraStore } from "@/store/cameraStore";
+import { useDarkMap } from "@/hooks/useDarkMap";
 import { alertsAsGeoJSON, alertsOnLine, untilText, useWeatherStore } from "@/services/weather";
 import { useSettingsStore } from "@/store/settingsStore";
 import {
@@ -94,6 +95,7 @@ export function RouteMode({
   const settings = useSettingsStore();
   const { showFov, basemap, osmLayers, set: setSetting } = settings;
   const weatherAlerts = useWeatherStore((s) => s.alerts);
+  const darkMap = useDarkMap(null);
   const weatherFC = useMemo(
     () => (settings.showWeather ? alertsAsGeoJSON(weatherAlerts) : null),
     [settings.showWeather, weatherAlerts],
@@ -453,6 +455,7 @@ export function RouteMode({
           onMapClick={handleMapPlace}
           osmLayers={osmLayers}
           weather={weatherFC}
+          dark={darkMap}
         />
         <div className="map-tools" role="toolbar" aria-label="Map tools">
           <div className="tool-group">

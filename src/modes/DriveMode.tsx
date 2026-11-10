@@ -32,6 +32,7 @@ import { useCameraStore } from "@/store/cameraStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useGeolocation } from "@/hooks/useGeolocation";
 import { useWakeLock } from "@/hooks/useWakeLock";
+import { useDarkMap } from "@/hooks/useDarkMap";
 import {
   AlertTracker,
   playAlert,
@@ -491,6 +492,8 @@ export function DriveMode({
     }
   }, [policeAhead, muted, alertSound, spokenAlerts]);
 
+  const darkMap = useDarkMap(here);
+
   // --- Weather: flooding and the like, where you are or on your route -------
   const weatherAlerts = useWeatherStore((s) => s.alerts);
   const showWeather = settings.showWeather;
@@ -850,6 +853,7 @@ export function DriveMode({
           osmLayers={osmLayers}
           lookAt={look}
           weather={weatherFC}
+          dark={darkMap}
           onLongPress={handleLongPress}
         />
 

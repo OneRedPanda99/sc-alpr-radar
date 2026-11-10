@@ -19,6 +19,8 @@ import {
 } from "@/services/symbols";
 
 const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
+/** Same map data, dark palette: for night, so the screen doesn't glare. */
+const BASEMAP_DARK = "https://tiles.openfreemap.org/styles/dark";
 
 // Raster satellite overlay (Esri World Imagery — free, no key).
 const SATELLITE_SOURCE = "satellite";
@@ -48,6 +50,8 @@ interface MapViewProps {
   onReady?: (map: maplibregl.Map) => void;
   /** Turn the map to this bearing. Bumping the token re-triggers the turn. */
   aimBearing?: { bearing: number; token: number } | null;
+  /** Dark street map (night). */
+  dark?: boolean;
   /** Weather warning areas, shaded under the roads and routes. */
   weather?: GeoJSON.FeatureCollection | null;
   /** Other candidate routes (Plan B/C, the fastest alternative), drawn faint. */
@@ -215,6 +219,7 @@ export function MapView({
   onMapClick,
   onReady,
   aimBearing,
+  dark = false,
   weather,
   altRoutes,
   routeColor = "#16e0b8",
@@ -262,7 +267,7 @@ export function MapView({
     if (!containerRef.current || mapRef.current) return;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: BASEMAP_STYLE,
+      style: dark ? BASEMAP_DARK : BASEMAP_STYLE,
       center: center ? [center.lon, center.lat] : [-81.0, 34.0],
       zoom: center ? 14 : 7,
       attributionControl: { compact: true },
@@ -273,6 +278,12 @@ export function MapView({
     const paintTimer = setTimeout(() => setPainted(true), 6000);
 
     map.on("load", () => {
+      // Everything the basemap brought; the rest is ours and survives a
+      // light/dark switch.
+      baseIdsRef.current = {
+        layers: new Set((map.getStyle().layers ?? []).map((l) => l.id)),
+        sources: new Set(Object.keys(map.getStyle().sources ?? {})),
+      };
       map.addSource(SATELLITE_SOURCE, {
         type: "raster",
         tiles: SATELLITE_TILES,
@@ -926,6 +937,35 @@ export function MapView({
     });
     // Only the token triggers this; plain center changes are handled below.
   }, [recenterToken, ready]);
+
+  // Swap the basemap between light and dark while keeping every layer and
+  // source the app added (cameras, routes, weather, OSM details) as-is.
+  const baseIdsRef = useRef<{ layers: Set<string>; sources: Set<string> } | null>(null);
+  const styleDarkRef = useRef(dark);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || styleDarkRef.current === dark) return;
+    styleDarkRef.current = dark;
+    map.setStyle(dark ? BASEMAP_DARK : BASEMAP_STYLE, {
+      transformStyle: (prev, next) => {
+        const base = baseIdsRef.current;
+        if (!prev || !base) return next;
+        const ourLayers = prev.layers.filter((l) => !base.layers.has(l.id));
+        const ourSources = Object.fromEntries(
+          Object.entries(prev.sources).filter(([k]) => !base.sources.has(k)),
+        );
+        baseIdsRef.current = {
+          layers: new Set(next.layers.map((l) => l.id)),
+          sources: new Set(Object.keys(next.sources)),
+        };
+        return {
+          ...next,
+          sources: { ...next.sources, ...ourSources },
+          layers: [...next.layers, ...ourLayers],
+        };
+      },
+    });
+  }, [dark, ready]);
 
   const lastDotsRef = useRef<{ list: Camera[]; hl?: Set<string> } | null>(null);
   useEffect(() => {

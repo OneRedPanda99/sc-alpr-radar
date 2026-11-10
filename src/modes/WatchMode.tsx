@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Camera } from "@/types";
 import { MapView } from "@/components/MapView";
+import { useDarkMap } from "@/hooks/useDarkMap";
 import { LiveCameraVideo, isLiveCamera } from "@/components/LiveCameraImage";
 import { LiveCamList } from "@/components/LiveCamList";
 import { ClipLibrary } from "@/components/ClipLibrary";
@@ -27,6 +28,7 @@ export function WatchMode() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [watchId, setWatchId] = useState<string | null>(null);
   const [aim, setAim] = useState<{ bearing: number; token: number } | null>(null);
+  const darkMap = useDarkMap(center);
 
   useEffect(() => {
     if (!("geolocation" in navigator)) return;
@@ -102,6 +104,7 @@ export function WatchMode() {
           onSelectCamera={handleSelect}
           highlightIds={selectedId ? new Set([selectedId]) : undefined}
           aimBearing={aim}
+          dark={darkMap}
         />
       </div>
 
