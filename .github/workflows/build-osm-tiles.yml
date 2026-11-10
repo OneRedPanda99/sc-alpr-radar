@@ -1,0 +1,84 @@
+name: Build OSM detail tiles
+
+# The map-detail layers (traffic lights, speed limits, shops, no-go roads…)
+# used to be fetched live from public Overpass servers, which are often
+# overloaded and took 10-40s or failed outright. This builds them for the
+# whole state from Geofabrik's extract instead, as small per-layer tiles that
+# ship with the site, so they load from the CDN in well under a second.
+#
+# Tiles are too big to commit, so they're published as a release asset that
+# the deploy workflow unpacks into the site.
+on:
+  schedule:
+    # Mondays 07:40 UTC; Geofabrik updates the extract daily.
+    - cron: "40 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  # The "Redeploy site" step dispatches deploy.yml.
+  actions: write
+
+concurrency:
+  group: build-osm-tiles
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 23.6+ runs the app's TypeScript rules directly.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install osmium
+        run: sudo apt-get update && sudo apt-get install -y osmium-tool
+
+      - name: Download South Carolina extract
+        run: |
+          curl -sSfL -o sc.osm.pbf https://download.geofabrik.de/north-america/us/south-carolina-latest.osm.pbf
+          curl -sSfL -o sc.poly https://download.geofabrik.de/north-america/us/south-carolina.poly
+
+      # Keep this in step with OSM_CATEGORIES in src/services/osmRules.ts; the
+      # script re-checks every feature against those rules anyway, so a filter
+      # that's too broad only costs time, while one too narrow drops features.
+      - name: Filter detail layers and roads
+        run: |
+          osmium tags-filter sc.osm.pbf \
+            n/highway=traffic_signals,stop,give_way \
+            n/traffic_calming \
+            n/railway=level_crossing,crossing \
+            nwr/maxheight \
+            nwr/barrier=toll_booth \
+            nwr/amenity=school,kindergarten,college,university,hospital,fire_station,clinic,courthouse,prison,townhall,fuel,charging_station,toilets,parking,restaurant,fast_food,cafe \
+            nwr/office=government \
+            nwr/highway=rest_area,services \
+            nwr/shop \
+            w/maxspeed \
+            -o details.osm.pbf
+          osmium export details.osm.pbf -f geojsonseq --add-unique-id=type_id -o details.geojsonseq
+          osmium tags-filter sc.osm.pbf \
+            w/highway=motorway,trunk,primary,secondary,tertiary,unclassified,residential,living_street,road,motorway_link,trunk_link,primary_link,secondary_link,tertiary_link \
+            -o roads.osm.pbf
+          osmium add-locations-to-ways roads.osm.pbf -f opl -o roads.opl
+
+      - name: Build tiles
+        run: node scripts/build-osm-tiles.mjs --details details.geojsonseq --roads roads.opl --poly sc.poly --out osm-tiles
+
+      - name: Publish as release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar -czf osm-tiles.tar.gz -C osm-tiles .
+          gh release view osm-tiles >/dev/null 2>&1 || \
+            gh release create osm-tiles --title "OSM detail tiles" \
+              --notes "Built weekly by .github/workflows/build-osm-tiles.yml; unpacked into the site by deploy.yml." \
+              --latest=false
+          gh release upload osm-tiles osm-tiles.tar.gz --clobber
+
+      - name: Redeploy site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --ref main

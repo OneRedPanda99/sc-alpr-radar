@@ -10,6 +10,8 @@ import {
   type Bbox,
 } from "@/services/osmDetails";
 import { fovConePolygon } from "@/services/geo";
+import { loadTiles } from "@/services/osmTiles";
+import { setLatestDeadEnds } from "@/services/deadEnds";
 import {
   aimBearingFor,
   ALL_SYMBOLS,
@@ -237,6 +239,8 @@ export function MapView({
   // the map fades in instead of popping in square by square.
   const [painted, setPainted] = useState(false);
   const [osmPick, setOsmPick] = useState<OsmPick | null>(null);
+  /** Full OSM tags for the inspector, kept off the map features (see draw). */
+  const osmTagsRef = useRef(new Map<string, string>());
   const [osmStatus, setOsmStatus] = useState<{
     loading: boolean;
     needZoom: string[];
@@ -455,7 +459,7 @@ export function MapView({
         if (!p) return;
         let tags: Record<string, string> = {};
         try {
-          tags = JSON.parse(String(p.tags));
+          tags = JSON.parse(osmTagsRef.current.get(`${p.osmType}/${p.osmId}`) ?? String(p.tags));
         } catch {
           // keep empty
         }
@@ -845,8 +849,34 @@ export function MapView({
 
     let ctrl: AbortController | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    // The box last fetched (padded), and which categories it holds.
-    let have: { bbox: Bbox; cats: string } | null = null;
+
+    // Features per layer, so each can arrive on its own. Each is stored
+    // without its full tag text: that's only needed when you tap one, and
+    // copying it to the map's worker on every redraw was most of the cost.
+    const byLayer = new Map<string, GeoJSON.Feature[]>();
+    const setLayer = (layer: string, features: GeoJSON.Feature[]) => {
+      const tags = osmTagsRef.current;
+      byLayer.set(
+        layer,
+        features.map((f) => {
+          const { tags: t, ...rest } = (f.properties ?? {}) as Record<string, unknown>;
+          if (typeof t === "string") tags.set(`${rest.osmType}/${rest.osmId}`, t);
+          return { type: "Feature", geometry: f.geometry, properties: rest };
+        }),
+      );
+    };
+    // Layers landing close together share one redraw instead of one each.
+    let drawQueued = 0;
+    const draw = () => {
+      if (drawQueued) return;
+      drawQueued = requestAnimationFrame(() => {
+        drawQueued = 0;
+        const all = [...byLayer.values()].flat();
+        pts?.setData({ type: "FeatureCollection", features: all.filter((f) => f.geometry.type === "Point") });
+        lns?.setData({ type: "FeatureCollection", features: all.filter((f) => f.geometry.type === "LineString") });
+        setLatestDeadEnds({ type: "FeatureCollection", features: byLayer.get("deadends") ?? [] });
+      });
+    };
 
     const load = async () => {
       const zoom = map.getZoom();
@@ -857,43 +887,50 @@ export function MapView({
       const needZoom = cats.filter((c) => zoom < c.minZoom).map((c) => c.label);
       const b = map.getBounds();
       const view: Bbox = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()];
-      const catsKey = usable.map((c) => c.id).join(",");
+      // Layers you've zoomed out of stop drawing.
+      for (const id of [...byLayer.keys()]) if (!usable.some((c) => c.id === id)) byLayer.delete(id);
       if (!usable.length) {
+        draw();
         setOsmStatus({ loading: false, needZoom, error: null });
         return;
       }
-      if (
-        have &&
-        have.cats === catsKey &&
-        view[0] >= have.bbox[0] &&
-        view[1] >= have.bbox[1] &&
-        view[2] <= have.bbox[2] &&
-        view[3] <= have.bbox[3]
-      ) {
-        setOsmStatus((s) => ({ ...s, needZoom }));
-        return;
-      }
-      // Pad by half a screen so small pans don't refetch.
-      const dLat = (view[2] - view[0]) / 2;
-      const dLon = (view[3] - view[1]) / 2;
-      const padded: Bbox = [view[0] - dLat, view[1] - dLon, view[2] + dLat, view[3] + dLon];
       ctrl?.abort();
-      ctrl = new AbortController();
+      const my = (ctrl = new AbortController());
       setOsmStatus({ loading: true, needZoom, error: null });
       try {
-        const fc = await fetchOsmDetails(usable, padded, ctrl.signal);
-        pts?.setData({
-          type: "FeatureCollection",
-          features: fc.features.filter((f) => f.geometry.type === "Point"),
-        });
-        lns?.setData({
-          type: "FeatureCollection",
-          features: fc.features.filter((f) => f.geometry.type === "LineString"),
-        });
-        have = { bbox: padded, cats: catsKey };
-        setOsmStatus({ loading: false, needZoom, error: null });
+        // Prebuilt statewide tiles first: from this device if seen before,
+        // else a few small files off the CDN, drawn layer by layer.
+        const covered = await loadTiles(
+          usable.map((c) => c.id),
+          view,
+          (layer, features) => {
+            if (my.signal.aborted) return;
+            setLayer(layer, features);
+            draw();
+          },
+          my.signal,
+        );
+        if (!covered && !my.signal.aborted) {
+          // Outside the tiles' coverage: live servers, a little beyond the view
+          // so small pans don't refetch.
+          const dLat = (view[2] - view[0]) / 4;
+          const dLon = (view[3] - view[1]) / 4;
+          const padded: Bbox = [view[0] - dLat, view[1] - dLon, view[2] + dLat, view[3] + dLon];
+          const fc = await fetchOsmDetails(usable, padded, my.signal);
+          byLayer.clear();
+          const grouped = new Map<string, GeoJSON.Feature[]>();
+          for (const f of fc.features) {
+            const id = String(f.properties?.category ?? "");
+            const list = grouped.get(id);
+            if (list) list.push(f);
+            else grouped.set(id, [f]);
+          }
+          for (const [id, list] of grouped) setLayer(id, list);
+          draw();
+        }
+        if (!my.signal.aborted) setOsmStatus({ loading: false, needZoom, error: null });
       } catch (e) {
-        if ((e as Error).name === "AbortError") return;
+        if ((e as Error).name === "AbortError" || my.signal.aborted) return;
         setOsmStatus({
           loading: false,
           needZoom,
@@ -904,13 +941,14 @@ export function MapView({
 
     const schedule = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => void load(), 650);
+      timer = setTimeout(() => void load(), 250);
     };
     void load();
     map.on("moveend", schedule);
     return () => {
       map.off("moveend", schedule);
       if (timer) clearTimeout(timer);
+      if (drawQueued) cancelAnimationFrame(drawQueued);
       ctrl?.abort();
     };
   }, [osmKey, ready]);
