@@ -16,6 +16,8 @@ import { aimBearingFor } from "@/services/symbols";
 import { LayersPanel } from "@/components/LayersPanel";
 import { PlaceInput } from "@/components/PlaceInput";
 import { LiveCamList } from "@/components/LiveCamList";
+import { ClipLibrary } from "@/components/ClipLibrary";
+import { useClipsStore } from "@/services/clips";
 import {
   DEFAULT_LAG_MS,
   RouteMeasure,
@@ -201,7 +203,8 @@ export function DriveMode({
   const [look, setLook] = useState<{ label: string; point: LatLng; token: number } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [clips, setClips] = useState<{ url: string; name: string; at: number }[]>([]);
+  const clips = useClipsStore((s) => s.clips);
+  const addClip = useClipsStore((s) => s.add);
   /** Builds this drive's record; the summary shows when you stop. */
   const recorderRef = useRef<DriveRecorder | null>(null);
   const lastFixRef = useRef<LatLng | null>(null);
@@ -601,8 +604,8 @@ export function DriveMode({
         };
       })
     : upcoming;
-  const handleClip = (url: string) =>
-    setClips((c) => [{ url, name: feedCam?.name ?? "SCDOT camera", at: Date.now() }, ...c].slice(0, 12));
+  const handleClip = (blob: Blob, mime: string) =>
+    addClip(blob, mime, feedCam?.name ?? "SCDOT camera");
 
   const selectedCamera = useMemo(
     () => dataset?.cameras.find((c) => c.id === selectedId) ?? null,
@@ -784,24 +787,7 @@ export function DriveMode({
             : "Live cameras near you show here once location is on. Overwatch lists every live camera."}
         </p>
       )}
-      {clips.length > 0 && (
-        <div className="clips">
-          <h4>Your passes</h4>
-          <ul>
-            {clips.map((c) => (
-              <li key={c.url}>
-                <video src={c.url} controls muted playsInline preload="metadata" />
-                <div className="clip-meta">
-                  <span>{c.name}</span>
-                  <a href={c.url} download={`pass-${new Date(c.at).toISOString().slice(0, 19)}.webm`}>
-                    Save
-                  </a>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <ClipLibrary since={recorderRef.current?.start} title="This drive's passes" />
       {!driving && liveCams.length > 0 && (
         <p className="tip">
           While driving, the camera you're about to pass is timed for you: it shows when you'll
@@ -1437,10 +1423,9 @@ function DriveSummary({ record, onClose }: { record: DriveRecord; onClose: () =>
       )}
       <p className="tip">
         {record.police > 0 ? `Police activity seen ahead: ${record.police}. ` : ""}
-        {record.clips > 0
-          ? `${record.clips} pass clip${record.clips === 1 ? "" : "s"} saved under Live.`
-          : "No pass clips this time."}
+        {record.clips > 0 ? "" : "No pass clips this time."}
       </p>
+      {record.clips > 0 && <ClipLibrary since={record.start} title="Clips from this drive" />}
       <p className="month-line">{monthText(month)}</p>
     </div>
   );

@@ -76,7 +76,7 @@ export function LiveCameraVideo({
   /** Your pass by this camera, to time the "you're on screen" cue. */
   pass?: PassInfo | null;
   /** Receives a recorded clip (blob URL) of the moment you pass. */
-  onClip?: (url: string) => void;
+  onClip?: (blob: Blob, mime: string) => void;
   /** Receives the measured delay behind real time, for scheduling other feeds. */
   onLag?: (ms: number) => void;
 }) {
@@ -201,25 +201,32 @@ export function LiveCameraVideo({
   // properly once you've parked. The live window is only ~15s, so without a
   // recording the moment is gone for good.
   useEffect(() => {
-    const v = videoRef.current as
-      | (HTMLVideoElement & { captureStream?: () => MediaStream })
-      | null;
+    const v = videoRef.current;
     if (!pass || frameWall == null || !v || !onClip || clipDoneRef.current) return;
     const rec = recorderRef.current;
     if (!rec && frameWall > pass.at - 6000 && frameWall < pass.at + 2000) {
-      if (!v.captureStream || typeof MediaRecorder === "undefined") return;
+      const capture = captureVideo(v);
+      if (!capture || typeof MediaRecorder === "undefined") {
+        clipDoneRef.current = true;
+        return;
+      }
       try {
         const chunks: Blob[] = [];
-        const r = new MediaRecorder(v.captureStream());
+        // Safari records MP4; Chrome (and the Tesla browser) record WebM.
+        const mime = MediaRecorder.isTypeSupported?.("video/mp4") ? "video/mp4" : "";
+        const r = new MediaRecorder(capture.stream, mime ? { mimeType: mime } : undefined);
         r.ondataavailable = (ev) => {
           if (ev.data.size) chunks.push(ev.data);
         };
         r.onstop = () => {
-          if (chunks.length) onClip(URL.createObjectURL(new Blob(chunks, { type: r.mimeType })));
+          capture.stop();
+          const type = r.mimeType || mime || "video/webm";
+          if (chunks.length) onClip(new Blob(chunks, { type }), type);
         };
         r.start(1000);
         recorderRef.current = r;
       } catch {
+        capture.stop();
         clipDoneRef.current = true; // unsupported here; don't retry every tick
       }
     } else if (rec && frameWall > pass.at + 7000) {
@@ -490,6 +497,8 @@ export function LiveCameraVideo({
       >
         <video
           ref={videoRef}
+          // Lets Safari's canvas recorder read the frames (the streams allow it).
+          crossOrigin="anonymous"
           muted
           playsInline
           autoPlay
@@ -738,3 +747,31 @@ function LiveCameraStill({
 
 /** Back-compat alias — call sites use the same name for either mode. */
 export const LiveCameraImage = LiveCameraVideo;
+
+/**
+ * A recordable stream of what the player shows. Chrome (and the Tesla
+ * browser) can capture the video element directly; Safari can't, so there
+ * the frames are copied onto a canvas and the canvas is recorded instead.
+ */
+function captureVideo(v: HTMLVideoElement): { stream: MediaStream; stop: () => void } | null {
+  const direct = v as HTMLVideoElement & { captureStream?: () => MediaStream };
+  if (typeof direct.captureStream === "function") {
+    return { stream: direct.captureStream(), stop: () => {} };
+  }
+  const canvas = document.createElement("canvas") as HTMLCanvasElement & {
+    captureStream?: (fps?: number) => MediaStream;
+  };
+  if (typeof canvas.captureStream !== "function" || !v.videoWidth) return null;
+  const scale = Math.min(1, 1280 / v.videoWidth);
+  canvas.width = Math.round(v.videoWidth * scale);
+  canvas.height = Math.round(v.videoHeight * scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  let raf = 0;
+  const draw = () => {
+    ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+    raf = requestAnimationFrame(draw);
+  };
+  draw();
+  return { stream: canvas.captureStream(25), stop: () => cancelAnimationFrame(raf) };
+}

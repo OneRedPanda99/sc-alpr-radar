@@ -2596,3 +2596,25 @@ html[data-ui="xl"] .drive-rail {
   font-size: 12px;
   color: var(--muted);
 }
+
+.clips-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.clips-head h4 {
+  margin: 0;
+}
+
+.clip-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.clip-meta span {
+  flex: 1;
+  min-width: 0;
+}
