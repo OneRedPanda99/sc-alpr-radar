@@ -6,7 +6,9 @@ import {
   addMark,
   clearMarks,
   marksFor,
+  offsetFor,
   placeOnFrame,
+  setOffset,
   type CalibMark,
 } from "@/services/camCalib";
 
@@ -54,6 +56,11 @@ export function isLiveCamera(camera: Camera): boolean {
  * first see it, less a small allowance for the camera's encoder and the CDN.
  */
 const UPSTREAM_DELAY_MS = 2000;
+/** How far the picture zooms in when it locks onto your car. */
+const LOCK_ZOOM = 2.5;
+/** One tap of "car's ahead / behind" moves the timing this much. */
+const NUDGE_MS = 500;
+
 /** How close (in estimated frame time) counts as "you're on screen now". */
 const ON_SCREEN_WINDOW_MS = 3500;
 
@@ -115,11 +122,32 @@ export function LiveCameraVideo({
   const [marks, setMarks] = useState<CalibMark[]>(() => marksFor(camera.id));
   const [marking, setMarking] = useState(false);
   const [markNote, setMarkNote] = useState<string | null>(null);
+  /** Per-camera timing correction, and whether lock-on is wanted / happening. */
+  const [offsetMs, setOffsetMs] = useState(() => offsetFor(camera.id));
+  const [lockOn, setLockOn] = useState(true);
+  const [engaged, setEngaged] = useState(false);
   useEffect(() => {
     setMarks(marksFor(camera.id));
+    setOffsetMs(offsetFor(camera.id));
     setMarking(false);
     setMarkNote(null);
   }, [camera.id]);
+
+  // The per-frame loop reads these without re-subscribing every render.
+  const passRef = useRef(pass);
+  passRef.current = pass;
+  const marksRef = useRef(marks);
+  marksRef.current = marks;
+  const offsetRef = useRef(offsetMs);
+  offsetRef.current = offsetMs;
+  const lockOnRef = useRef(lockOn);
+  lockOnRef.current = lockOn;
+  const markingRef = useRef(marking);
+  markingRef.current = marking;
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const engagedRef = useRef(false);
+  const dotRef = useRef<HTMLSpanElement>(null);
 
   // Reset the viewer when the camera changes; a pan into the corner of the
   // previous camera's frame is meaningless on the next one.
@@ -481,6 +509,103 @@ export function LiveCameraVideo({
     dimHeadlights,
   ]);
 
+  /**
+   * Lock-on: every display frame, work out where your car is in the frame on
+   * screen (from the frame's estimated capture time, your GPS track at that
+   * moment and your marks on this camera), then zoom in and pan so it stays
+   * centred, and place the "You" dot. Runs on requestAnimationFrame and
+   * writes styles directly, so it moves smoothly at your real speed instead
+   * of stepping 4 times a second through React.
+   */
+  useEffect(() => {
+    if (useStill) return;
+    const st = { z: 1, cx: 0.5, cy: 0.5, tx: 0, ty: 0, active: false };
+    let raf = 0;
+    let lastFrame = 0;
+    const step = () => {
+      const v = videoRef.current;
+      const el = wrapRef.current;
+      const dot = dotRef.current;
+      const e = edgeRef.current;
+      const p = passRef.current;
+      if (!v || !el || !dot) return;
+
+      let target: { u: number; v: number } | null = null;
+      if (p?.distanceAt && e && v.readyState >= 2 && v.videoWidth && marksRef.current.length >= 2) {
+        const fw = e.wall - (e.media - v.currentTime) * 1000 + offsetRef.current;
+        const d = p.distanceAt(fw);
+        const pos = d == null ? null : placeOnFrame(marksRef.current, fw < p.at ? -d : d);
+        if (pos) {
+          const r = el.getBoundingClientRect();
+          const k = Math.max(r.width / v.videoWidth, r.height / v.videoHeight);
+          const w = v.videoWidth * k;
+          const h = v.videoHeight * k;
+          target = {
+            u: ((r.width - w) / 2 + pos.x * w) / r.width,
+            v: ((r.height - h) / 2 + pos.y * h) / r.height,
+          };
+        }
+      }
+
+      const locking = !!target && lockOnRef.current && !markingRef.current;
+      if (locking || st.active) {
+        // Ease in and out, and follow with a little lag so GPS jitter
+        // doesn't shake the picture.
+        st.z += ((locking ? LOCK_ZOOM : 1) - st.z) * 0.12;
+        const tu = target?.u ?? 0.5;
+        const tv = target?.v ?? 0.5;
+        st.cx += (tu - st.cx) * 0.3;
+        st.cy += (tv - st.cy) * 0.3;
+        const lim = 0.5 - 0.5 / st.z;
+        st.tx = Math.max(-lim, Math.min(lim, 0.5 - st.cx));
+        st.ty = Math.max(-lim, Math.min(lim, 0.5 - st.cy));
+        if (!locking && Math.abs(st.z - 1) < 0.01) {
+          st.active = false;
+          st.z = 1;
+          st.tx = st.ty = 0;
+          v.style.transform = "";
+        } else {
+          st.active = true;
+          v.style.transform = `scale(${st.z}) translate(${st.tx * 100}%, ${st.ty * 100}%)`;
+        }
+        if (st.active !== engagedRef.current) {
+          engagedRef.current = st.active;
+          setEngaged(st.active);
+        }
+      }
+
+      // The dot sits on the same spot, through whatever zoom is applied.
+      const manualZoom = !st.active && zoomRef.current !== 1;
+      if (target && !manualZoom && !markingRef.current) {
+        const r = el.getBoundingClientRect();
+        const z = st.active ? st.z : 1;
+        const x = 0.5 + z * (target.u + st.tx - 0.5);
+        const y = 0.5 + z * (target.v + st.ty - 0.5);
+        dot.style.display = x >= 0 && x <= 1 && y >= 0 && y <= 1 ? "block" : "none";
+        dot.style.left = `${x * r.width}px`;
+        dot.style.top = `${y * r.height}px`;
+      } else {
+        dot.style.display = "none";
+      }
+    };
+    const loop = () => {
+      raf = requestAnimationFrame(loop);
+      lastFrame = performance.now();
+      step();
+    };
+    raf = requestAnimationFrame(loop);
+    // Some browsers stall animation frames (a backgrounded window, a busy car
+    // browser); keep following at ~10 fps rather than freezing.
+    const backup = window.setInterval(() => {
+      if (performance.now() - lastFrame > 150) step();
+    }, 100);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearInterval(backup);
+      engagedRef.current = false;
+    };
+  }, [useStill, camera.streamUrl]);
+
   if (useStill) {
     return (
       <LiveCameraStill
@@ -544,11 +669,11 @@ export function LiveCameraVideo({
     );
   };
 
-  // Where you'd be in the frame on screen, from your marks on this camera.
-  const nowS = signedAt(frameWall);
-  const spot = nowS != null && zoom === 1 ? placeOnFrame(marks, nowS) : null;
-  const box = spot ? frameBox() : null;
-  const dot = spot && box ? { left: box.ox + spot.x * box.w, top: box.oy + spot.y * box.h } : null;
+  const nudgeTiming = (ms: number) => {
+    const next = offsetMs + ms;
+    setOffsetMs(next);
+    setOffset(camera.id, next);
+  };
 
   // Over the picture it hides the very car you're looking for, so it sits
   // under the video, except in fullscreen where there is no "under".
@@ -569,8 +694,14 @@ export function LiveCameraVideo({
       onClearMarks={() => {
         clearMarks(camera.id);
         setMarks([]);
+        setOffsetMs(0);
         setMarkNote("Marks cleared for this camera.");
       }}
+      lockOn={lockOn}
+      engaged={engaged}
+      offsetMs={offsetMs}
+      onToggleLock={() => setLockOn((v) => !v)}
+      onNudge={nudgeTiming}
     />
   );
 
@@ -598,7 +729,8 @@ export function LiveCameraVideo({
           autoPlay
           style={{
             filter: dimHeadlights ? DIM_FILTER : undefined,
-            transform: `scale(${zoom}) translate(${pan.x}%, ${pan.y}%)`,
+            // While locked on, the per-frame loop owns the transform.
+            transform: engaged ? undefined : `scale(${zoom}) translate(${pan.x}%, ${pan.y}%)`,
           }}
           onPlaying={() => {
             setPlaying(true);
@@ -622,15 +754,15 @@ export function LiveCameraVideo({
             </span>
           )}
         </div>
-        {dot && (
-          <span
-            className="car-dot"
-            style={{ left: dot.left, top: dot.top }}
-            title="Where your car should be in this frame (estimated from your marks)"
-          >
-            <span className="car-dot-label">You</span>
-          </span>
-        )}
+        <span
+          ref={dotRef}
+          className="car-dot"
+          style={{ display: "none" }}
+          title="Where your car should be in this frame (estimated from your marks)"
+        >
+          <span className="car-dot-label">You</span>
+        </span>
+        {engaged && <div className="lock-badge">Locked on</div>}
         {marking && <div className="mark-prompt">Tap your car in the picture</div>}
         {isFull && overlay}
 
@@ -711,6 +843,11 @@ function PassOverlay({
   onMark,
   onCancelMark,
   onClearMarks,
+  lockOn,
+  engaged,
+  offsetMs,
+  onToggleLock,
+  onNudge,
 }: {
   pass: PassInfo;
   frameWall: number | null;
@@ -725,6 +862,11 @@ function PassOverlay({
   onMark: () => void;
   onCancelMark: () => void;
   onClearMarks: () => void;
+  lockOn: boolean;
+  engaged: boolean;
+  offsetMs: number;
+  onToggleLock: () => void;
+  onNudge: (ms: number) => void;
 }) {
   const untilPass = (pass.at - Date.now()) / 1000;
   // Seconds until the frame showing your pass reaches the screen.
@@ -798,12 +940,49 @@ function PassOverlay({
               Mark my car
             </button>
           ))}
+        {marks >= 2 && !marking && (
+          <button
+            type="button"
+            className={`live-cam-btn ${lockOn ? "on" : ""}`}
+            aria-pressed={lockOn}
+            onClick={onToggleLock}
+            title="Zoom in and follow your car when it's in the picture"
+          >
+            Lock-on {lockOn ? "on" : "off"}
+          </button>
+        )}
         {marks > 0 && !marking && (
           <button type="button" className="live-cam-btn" onClick={onClearMarks}>
             Clear {marks} mark{marks === 1 ? "" : "s"}
           </button>
         )}
       </div>
+      {engaged && (
+        <div className="pass-actions">
+          <button
+            type="button"
+            className="live-cam-btn"
+            onClick={() => onNudge(-NUDGE_MS)}
+            title="Your car is behind where the lock is: move the timing earlier"
+          >
+            Car's behind
+          </button>
+          <button
+            type="button"
+            className="live-cam-btn"
+            onClick={() => onNudge(NUDGE_MS)}
+            title="Your car is ahead of where the lock is: move the timing later"
+          >
+            Car's ahead
+          </button>
+          {offsetMs !== 0 && (
+            <span className="pass-hint">
+              Timing {offsetMs > 0 ? "+" : ""}
+              {(offsetMs / 1000).toFixed(1)}s for this camera
+            </span>
+          )}
+        </div>
+      )}
       {markNote && <div className="pass-hint">{markNote}</div>}
     </div>
   );

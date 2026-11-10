@@ -256,6 +256,8 @@ export interface Settings {
   uiScale: "auto" | "normal" | "large" | "xl";
   /** Say what's coming ("Flock camera in 400 feet") after the alert tone. */
   spokenAlerts: boolean;
+  /** Light or dark street map; "auto" goes dark after sunset where you are. */
+  mapTheme: "auto" | "light" | "dark";
   /** Basemap style key. */
   basemap: "streets" | "satellite";
   /** Route avoidance: Flock Safety plate readers. */

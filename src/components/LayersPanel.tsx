@@ -44,7 +44,7 @@ const CAMERA_LAYERS: { key: BoolKey; label: string; color: string; hint?: string
 /** One place for everything the map can show, instead of chips plus Settings. */
 export function LayersPanel({ onClose }: { onClose: () => void }) {
   const settings = useSettingsStore();
-  const { set, osmLayers, basemap } = settings;
+  const { set, osmLayers, basemap, mapTheme } = settings;
 
   const toggleOsm = (id: string) =>
     set(
@@ -77,6 +77,27 @@ export function LayersPanel({ onClose }: { onClose: () => void }) {
           Satellite
         </button>
       </div>
+
+      {basemap === "streets" && (
+        <div className="seg layers-basemap" role="group" aria-label="Map brightness">
+          {(
+            [
+              ["auto", "Auto (dark at night)"],
+              ["light", "Light"],
+              ["dark", "Dark"],
+            ] as const
+          ).map(([v, label]) => (
+            <button
+              key={v}
+              type="button"
+              className={mapTheme === v ? "seg-on" : ""}
+              onClick={() => set("mapTheme", v)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <h4>Cameras &amp; activity</h4>
       <div className="layer-grid">

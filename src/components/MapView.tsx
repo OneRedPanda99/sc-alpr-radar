@@ -19,6 +19,8 @@ import {
 } from "@/services/symbols";
 
 const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
+/** Same map data, dark palette: for night, so the screen doesn't glare. */
+const BASEMAP_DARK = "https://tiles.openfreemap.org/styles/dark";
 
 // Raster satellite overlay (Esri World Imagery — free, no key).
 const SATELLITE_SOURCE = "satellite";
@@ -48,6 +50,8 @@ interface MapViewProps {
   onReady?: (map: maplibregl.Map) => void;
   /** Turn the map to this bearing. Bumping the token re-triggers the turn. */
   aimBearing?: { bearing: number; token: number } | null;
+  /** Dark street map (night). */
+  dark?: boolean;
   /** Weather warning areas, shaded under the roads and routes. */
   weather?: GeoJSON.FeatureCollection | null;
   /** Other candidate routes (Plan B/C, the fastest alternative), drawn faint. */
@@ -88,6 +92,8 @@ interface OsmPick {
 const CAMERA_SOURCE = "cameras";
 const FOV_SOURCE = "fov";
 const SYMBOL_SOURCE = "symbols";
+/** Highlighted cameras (on a route) live apart so grouping never hides them. */
+const HL_SOURCE = "cameras-hl";
 const SYMBOL_LAYER = "symbol-glyphs";
 const ROUTE_SOURCE = "route";
 const ROUTE_CASING = "route-casing";
@@ -175,6 +181,7 @@ function symbolsToFC(
       properties: {
         id: c.id,
         symbol,
+        kind: c.kind,
         highlight: highlightIds?.has(c.id) ?? false,
       },
     });
@@ -212,6 +219,7 @@ export function MapView({
   onMapClick,
   onReady,
   aimBearing,
+  dark = false,
   weather,
   altRoutes,
   routeColor = "#16e0b8",
@@ -259,7 +267,7 @@ export function MapView({
     if (!containerRef.current || mapRef.current) return;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: BASEMAP_STYLE,
+      style: dark ? BASEMAP_DARK : BASEMAP_STYLE,
       center: center ? [center.lon, center.lat] : [-81.0, 34.0],
       zoom: center ? 14 : 7,
       attributionControl: { compact: true },
@@ -270,6 +278,12 @@ export function MapView({
     const paintTimer = setTimeout(() => setPainted(true), 6000);
 
     map.on("load", () => {
+      // Everything the basemap brought; the rest is ours and survives a
+      // light/dark switch.
+      baseIdsRef.current = {
+        layers: new Set((map.getStyle().layers ?? []).map((l) => l.id)),
+        sources: new Set(Object.keys(map.getStyle().sources ?? {})),
+      };
       map.addSource(SATELLITE_SOURCE, {
         type: "raster",
         tiles: SATELLITE_TILES,
@@ -288,6 +302,7 @@ export function MapView({
       map.addSource(FOV_SOURCE, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: "fov-fill",
+        minzoom: 11,
         type: "fill",
         source: FOV_SOURCE,
         paint: {
@@ -297,6 +312,7 @@ export function MapView({
       });
       map.addLayer({
         id: "fov-outline",
+        minzoom: 11,
         type: "line",
         source: FOV_SOURCE,
         paint: {
@@ -459,11 +475,66 @@ export function MapView({
         });
       }
 
-      map.addSource(CAMERA_SOURCE, { type: "geojson", data: EMPTY_FC });
+      // At state scale ~5,000 dots bury every road; group them into counted
+      // bubbles that split apart as you zoom in.
+      map.addSource(CAMERA_SOURCE, {
+        type: "geojson",
+        data: EMPTY_FC,
+        cluster: true,
+        clusterMaxZoom: 10,
+        clusterRadius: 42,
+      });
+      map.addLayer({
+        id: "camera-clusters",
+        type: "circle",
+        source: CAMERA_SOURCE,
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": "rgba(14, 20, 30, 0.88)",
+          "circle-radius": ["step", ["get", "point_count"], 13, 25, 17, 100, 22, 400, 27],
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#ff4d4d",
+        },
+      });
+      if (font) {
+        map.addLayer({
+          id: "camera-cluster-count",
+          type: "symbol",
+          source: CAMERA_SOURCE,
+          filter: ["has", "point_count"],
+          layout: {
+            "text-field": ["get", "point_count_abbreviated"],
+            "text-font": font,
+            "text-size": 12,
+            "text-allow-overlap": true,
+          },
+          paint: { "text-color": "#ffffff" },
+        });
+      }
+      map.on("click", "camera-clusters", (e) => {
+        const f = e.features?.[0];
+        const id = f?.properties?.cluster_id;
+        if (id == null || f?.geometry.type !== "Point") return;
+        const src = map.getSource(CAMERA_SOURCE) as maplibregl.GeoJSONSource;
+        void src.getClusterExpansionZoom(id).then((zoom) => {
+          map.easeTo({
+            center: f.geometry.type === "Point" ? (f.geometry.coordinates as [number, number]) : undefined,
+            zoom: zoom + 0.3,
+            duration: 500,
+          });
+        });
+      });
+      map.on("mouseenter", "camera-clusters", () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", "camera-clusters", () => {
+        map.getCanvas().style.cursor = "";
+      });
       map.addLayer({
         id: "camera-dots",
         type: "circle",
         source: CAMERA_SOURCE,
+        filter: ["!", ["has", "point_count"]],
         paint: {
           // Smaller at state scale, where ~5,000 dots otherwise bury every
           // road (and any planned route) in solid colour.
@@ -524,10 +595,17 @@ export function MapView({
         layout: {
           "icon-image": ["get", "symbol"],
           "icon-size": [
-            "case",
-            ["boolean", ["get", "highlight"], false],
-            1.25,
-            0.85,
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            6,
+            ["case", ["==", ["get", "kind"], "police"], 0, ["boolean", ["get", "highlight"], false], 0.9, 0.45],
+            9,
+            ["case", ["==", ["get", "kind"], "police"], 0, ["boolean", ["get", "highlight"], false], 1, 0.6],
+            12,
+            ["case", ["==", ["get", "kind"], "police"], 0.75, ["boolean", ["get", "highlight"], false], 1.15, 0.8],
+            15,
+            ["case", ["boolean", ["get", "highlight"], false], 1.25, 0.85],
           ],
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
@@ -538,11 +616,11 @@ export function MapView({
       // sit shoulder to shoulder and hid the route line completely. The
       // cameras that are actually on the route are then redrawn on top.
       for (const id of ["route-alt", ROUTE_CASING, "route-line"]) map.moveLayer(id);
+      map.addSource(HL_SOURCE, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: "camera-dots-hl",
         type: "circle",
-        source: CAMERA_SOURCE,
-        filter: ["==", ["get", "highlight"], true],
+        source: HL_SOURCE,
         paint: {
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 6, 12, 8, 15, 10],
           "circle-color": ["get", "color"],
@@ -604,6 +682,12 @@ export function MapView({
       };
       map.on("click", "camera-dots", onTouchTap);
       map.on("click", SYMBOL_LAYER, onTouchTap);
+
+      map.on("styleimagemissing", (e) => {
+        if (map.hasImage(e.id)) return;
+        const img = rasterizeSymbol(e.id);
+        if (img) map.addImage(e.id, img, { pixelRatio: 2 });
+      });
 
       map.on("rotate", () => setBearing(map.getBearing()));
 
@@ -854,12 +938,60 @@ export function MapView({
     // Only the token triggers this; plain center changes are handled below.
   }, [recenterToken, ready]);
 
+  // Swap the basemap between light and dark while keeping every layer and
+  // source the app added (cameras, routes, weather, OSM details) as-is.
+  const baseIdsRef = useRef<{ layers: Set<string>; sources: Set<string> } | null>(null);
+  const styleDarkRef = useRef(dark);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || styleDarkRef.current === dark) return;
+    styleDarkRef.current = dark;
+    map.setStyle(dark ? BASEMAP_DARK : BASEMAP_STYLE, {
+      transformStyle: (prev, next) => {
+        const base = baseIdsRef.current;
+        if (!prev || !base) return next;
+        const ourLayers = prev.layers.filter((l) => !base.layers.has(l.id));
+        const ourSources = Object.fromEntries(
+          Object.entries(prev.sources).filter(([k]) => !base.sources.has(k)),
+        );
+        baseIdsRef.current = {
+          layers: new Set(next.layers.map((l) => l.id)),
+          sources: new Set(Object.keys(next.sources)),
+        };
+        return {
+          ...next,
+          sources: { ...next.sources, ...ourSources },
+          layers: [...next.layers, ...ourLayers],
+        };
+      },
+    });
+  }, [dark, ready]);
+
+  const lastDotsRef = useRef<{ list: Camera[]; hl?: Set<string> } | null>(null);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
     const src = map.getSource(CAMERA_SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
-    src.setData(camerasToFC(cameras, highlightIds));
+    // Aircraft move every second and are new objects each tick; every other
+    // camera keeps its identity, so compare those by reference and skip the
+    // expensive re-send (and re-grouping) when nothing about them changed.
+    const dots = cameras.filter((c) => !hasSymbol(c));
+    const last = lastDotsRef.current;
+    const same =
+      last &&
+      last.hl === highlightIds &&
+      last.list.length === dots.length &&
+      last.list.every((c, i) => c === dots[i]);
+    if (!same) {
+      const fc = camerasToFC(dots, highlightIds);
+      src.setData(fc);
+      (map.getSource(HL_SOURCE) as maplibregl.GeoJSONSource | undefined)?.setData({
+        type: "FeatureCollection",
+        features: fc.features.filter((f) => f.properties?.highlight),
+      });
+      lastDotsRef.current = { list: dots, hl: highlightIds };
+    }
     const sym = map.getSource(SYMBOL_SOURCE) as
       | maplibregl.GeoJSONSource
       | undefined;

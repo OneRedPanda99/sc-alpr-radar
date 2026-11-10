@@ -18,7 +18,7 @@ export interface CalibMark {
   s: number;
 }
 
-type Store = Record<string, { marks: CalibMark[]; at: number }>;
+type Store = Record<string, { marks: CalibMark[]; at: number; offsetMs?: number }>;
 
 function load(): Store {
   try {
@@ -46,9 +46,24 @@ export function addMark(camId: string, mark: CalibMark): CalibMark[] {
   const marks = (store[camId]?.marks ?? []).filter((m) => Math.abs(m.s - mark.s) > 15);
   marks.push(mark);
   marks.sort((a, b) => a.s - b.s);
-  store[camId] = { marks, at: Date.now() };
+  store[camId] = { ...store[camId], marks, at: Date.now() };
   save(store);
   return marks;
+}
+
+/**
+ * A per-camera correction to the estimated frame time. The streams carry no
+ * timestamps, so the delay is estimated to within a second or so; nudging
+ * "car's ahead / behind" once or twice settles it for that camera.
+ */
+export function offsetFor(camId: string): number {
+  return load()[camId]?.offsetMs ?? 0;
+}
+
+export function setOffset(camId: string, ms: number) {
+  const store = load();
+  store[camId] = { marks: store[camId]?.marks ?? [], at: Date.now(), offsetMs: ms };
+  save(store);
 }
 
 export function clearMarks(camId: string) {
