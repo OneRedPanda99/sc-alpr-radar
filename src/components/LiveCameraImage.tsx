@@ -2,6 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import type { Camera } from "@/types";
 import { useSettingsStore } from "@/store/settingsStore";
+import {
+  addMark,
+  clearMarks,
+  marksFor,
+  placeOnFrame,
+  type CalibMark,
+} from "@/services/camCalib";
 
 /**
  * Tone curve for the headlight dimmer.
@@ -68,6 +75,7 @@ export function LiveCameraVideo({
   pass,
   onClip,
   onLag,
+  onHold,
 }: {
   camera: Camera;
   onError?: () => void;
@@ -79,9 +87,13 @@ export function LiveCameraVideo({
   onClip?: (blob: Blob, mime: string) => void;
   /** Receives the measured delay behind real time, for scheduling other feeds. */
   onLag?: (ms: number) => void;
+  /** You paused, stepped back or started marking: keep this camera on screen. */
+  onHold?: () => void;
 }) {
   const onLagRef = useRef(onLag);
   onLagRef.current = onLag;
+  const onHoldRef = useRef(onHold);
+  onHoldRef.current = onHold;
   const videoRef = useRef<HTMLVideoElement>(null);
   /** Latest playlist edge (media seconds) and the wall time it appeared. */
   const edgeRef = useRef<{ media: number; wall: number } | null>(null);
@@ -99,6 +111,15 @@ export function LiveCameraVideo({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{ x: number; y: number } | null>(null);
+  /** Your taps on this camera's picture, for placing the car dot. */
+  const [marks, setMarks] = useState<CalibMark[]>(() => marksFor(camera.id));
+  const [marking, setMarking] = useState(false);
+  const [markNote, setMarkNote] = useState<string | null>(null);
+  useEffect(() => {
+    setMarks(marksFor(camera.id));
+    setMarking(false);
+    setMarkNote(null);
+  }, [camera.id]);
 
   // Reset the viewer when the camera changes; a pan into the corner of the
   // previous camera's frame is meaningless on the next one.
@@ -122,6 +143,7 @@ export function LiveCameraVideo({
     } else {
       v.pause();
       setPaused(true);
+      onHoldRef.current?.();
     }
   }, []);
 
@@ -134,6 +156,7 @@ export function LiveCameraVideo({
     v.currentTime = Math.max(floor + 0.1, v.currentTime + seconds);
     v.pause();
     setPaused(true);
+    onHoldRef.current?.();
   }, []);
 
   const goLive = useCallback(() => {
@@ -468,6 +491,65 @@ export function LiveCameraVideo({
     );
   }
 
+  /** Metres along the road at time t: negative before the camera, positive after. */
+  const signedAt = (t: number | null): number | null => {
+    if (t == null || !pass?.distanceAt) return null;
+    const d = pass.distanceAt(t);
+    return d == null ? null : t < pass.at ? -d : d;
+  };
+
+  /** The picture's box inside the player (object-fit: cover crops it). */
+  const frameBox = () => {
+    const v = videoRef.current;
+    const el = wrapRef.current;
+    if (!v || !el || !v.videoWidth) return null;
+    const r = el.getBoundingClientRect();
+    const scale = Math.max(r.width / v.videoWidth, r.height / v.videoHeight);
+    const w = v.videoWidth * scale;
+    const h = v.videoHeight * scale;
+    return { r, w, h, ox: (r.width - w) / 2, oy: (r.height - h) / 2 };
+  };
+
+  const startMarking = () => {
+    // A frame has to hold still to tap the car in it; zoom would skew the spot.
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    videoRef.current?.pause();
+    setPaused(true);
+    onHold?.();
+    setMarkNote(null);
+    setMarking(true);
+  };
+
+  const onMarkTap = (e: React.MouseEvent) => {
+    // Taps on the player's own buttons aren't taps on the car.
+    if (!marking || (e.target as HTMLElement).closest("button")) return;
+    const box = frameBox();
+    const s = signedAt(frameWall);
+    if (!box) return;
+    if (s == null || Math.abs(s) > 1500) {
+      setMarkNote("This frame is from before or after your drive was tracked. Step to your pass first.");
+      setMarking(false);
+      return;
+    }
+    const x = (e.clientX - box.r.left - box.ox) / box.w;
+    const y = (e.clientY - box.r.top - box.oy) / box.h;
+    const next = addMark(camera.id, { x, y, s });
+    setMarks(next);
+    setMarking(false);
+    setMarkNote(
+      next.length < 2
+        ? "Got it. Mark your car once more in a frame further along your pass to switch on the dot."
+        : `${next.length} marks saved. The dot will follow you on this camera.`,
+    );
+  };
+
+  // Where you'd be in the frame on screen, from your marks on this camera.
+  const nowS = signedAt(frameWall);
+  const spot = nowS != null && zoom === 1 ? placeOnFrame(marks, nowS) : null;
+  const box = spot ? frameBox() : null;
+  const dot = spot && box ? { left: box.ox + spot.x * box.w, top: box.oy + spot.y * box.h } : null;
+
   // Over the picture it hides the very car you're looking for, so it sits
   // under the video, except in fullscreen where there is no "under".
   const overlay = pass && (
@@ -478,18 +560,30 @@ export function LiveCameraVideo({
       onReplay={replayPass}
       recording={!!recorderRef.current}
       below={!isFull}
+      marks={marks.length}
+      marking={marking}
+      markNote={markNote}
+      canMark={!!pass.distanceAt}
+      onMark={startMarking}
+      onCancelMark={() => setMarking(false)}
+      onClearMarks={() => {
+        clearMarks(camera.id);
+        setMarks([]);
+        setMarkNote("Marks cleared for this camera.");
+      }}
     />
   );
 
   return (
     <>
       <div
-        className={`live-cam ${zoom > 1 ? "zoomed" : ""} ${
+        className={`live-cam ${zoom > 1 ? "zoomed" : ""} ${marking ? "marking" : ""} ${
           pass && frameWall != null && Math.abs(frameWall - pass.at) < ON_SCREEN_WINDOW_MS
             ? "on-screen"
             : ""
         }`}
         ref={wrapRef}
+        onClick={onMarkTap}
         onPointerDown={onPanStart}
         onPointerMove={onPanMove}
         onPointerUp={onPanEnd}
@@ -528,6 +622,16 @@ export function LiveCameraVideo({
             </span>
           )}
         </div>
+        {dot && (
+          <span
+            className="car-dot"
+            style={{ left: dot.left, top: dot.top }}
+            title="Where your car should be in this frame (estimated from your marks)"
+          >
+            <span className="car-dot-label">You</span>
+          </span>
+        )}
+        {marking && <div className="mark-prompt">Tap your car in the picture</div>}
         {isFull && overlay}
 
         <div className="live-cam-controls">
@@ -600,6 +704,13 @@ function PassOverlay({
   onReplay,
   recording,
   below,
+  marks,
+  marking,
+  markNote,
+  canMark,
+  onMark,
+  onCancelMark,
+  onClearMarks,
 }: {
   pass: PassInfo;
   frameWall: number | null;
@@ -607,6 +718,13 @@ function PassOverlay({
   onReplay: () => void;
   recording: boolean;
   below: boolean;
+  marks: number;
+  marking: boolean;
+  markNote: string | null;
+  canMark: boolean;
+  onMark: () => void;
+  onCancelMark: () => void;
+  onClearMarks: () => void;
 }) {
   const untilPass = (pass.at - Date.now()) / 1000;
   // Seconds until the frame showing your pass reaches the screen.
@@ -659,11 +777,34 @@ function PassOverlay({
           </span>
         </div>
       )}
-      {past && (
-        <button type="button" className="live-cam-btn" onClick={onReplay}>
-          Replay my pass
-        </button>
-      )}
+      <div className="pass-actions">
+        {past && (
+          <button type="button" className="live-cam-btn" onClick={onReplay}>
+            Replay my pass
+          </button>
+        )}
+        {canMark &&
+          (marking ? (
+            <button type="button" className="live-cam-btn" onClick={onCancelMark}>
+              Cancel marking
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="live-cam-btn"
+              onClick={onMark}
+              title="Pause on a frame where you can see your car, then tap it. Two marks switch on the dot."
+            >
+              Mark my car
+            </button>
+          ))}
+        {marks > 0 && !marking && (
+          <button type="button" className="live-cam-btn" onClick={onClearMarks}>
+            Clear {marks} mark{marks === 1 ? "" : "s"}
+          </button>
+        )}
+      </div>
+      {markNote && <div className="pass-hint">{markNote}</div>}
     </div>
   );
 }

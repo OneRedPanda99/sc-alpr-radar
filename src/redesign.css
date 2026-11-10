@@ -2618,3 +2618,69 @@ html[data-ui="xl"] .drive-rail {
   flex: 1;
   min-width: 0;
 }
+
+/* --- Your car on the feed ------------------------------------------------- */
+.car-dot {
+  position: absolute;
+  z-index: 3;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(22, 224, 184, 0.45), 0 0 14px rgba(22, 224, 184, 0.8);
+  pointer-events: none;
+  transition: left 0.25s linear, top 0.25s linear;
+}
+
+.car-dot-label {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(7, 11, 16, 0.85);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.live-cam.marking {
+  cursor: crosshair;
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.mark-prompt {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: 44px;
+  transform: translateX(-50%);
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.pass-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pass-actions:empty {
+  display: none;
+}
+
+.pass-overlay .pass-actions .live-cam-btn {
+  margin-top: 0;
+}
+

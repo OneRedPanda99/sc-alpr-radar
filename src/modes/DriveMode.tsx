@@ -769,6 +769,7 @@ export function DriveMode({
                 camera={feedCam}
                 pass={feedPass}
                 onClip={handleClip}
+                onHold={() => setPinnedFeedId(feedCam.id)}
                 onLag={(ms) => {
                   // A stalled or paused player stops meaning anything past this.
                   lagRef.current = ms < MAX_TRUSTED_LAG_MS ? ms : DEFAULT_LAG_MS;
