@@ -362,9 +362,11 @@ export function MapView({
       });
       // Reuse whatever font the basemap ships, so labels never request a
       // glyph set the tile server doesn't have.
-      const font = (map.getStyle().layers ?? [])
+      // Prefer the regular weight; the first one listed is often italic.
+      const fonts = (map.getStyle().layers ?? [])
         .map((l) => (l.layout as Record<string, unknown> | undefined)?.["text-font"])
-        .find((f): f is string[] => Array.isArray(f));
+        .filter((f): f is string[] => Array.isArray(f));
+      const font = fonts.find((f) => f.some((n) => /regular/i.test(n))) ?? fonts[0];
       if (font) {
         map.addLayer({
           id: OSM_LINE_LABELS,
@@ -684,7 +686,11 @@ export function MapView({
       map.on("click", SYMBOL_LAYER, onTouchTap);
 
       map.on("styleimagemissing", (e) => {
-        if (map.hasImage(e.id)) return;
+        // Only our emoji. The basemap asks for its own pattern images (park
+        // fills and so on) too; drawing those names as text tiled "pa-pa-pa"
+        // across the dark map.
+        const isEmoji = [...e.id].some((ch) => ch.charCodeAt(0) > 127);
+        if (map.hasImage(e.id) || !isEmoji) return;
         const img = rasterizeSymbol(e.id);
         if (img) map.addImage(e.id, img, { pixelRatio: 2 });
       });
