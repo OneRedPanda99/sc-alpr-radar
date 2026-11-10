@@ -22,6 +22,7 @@ import {
   DEFAULT_LAG_MS,
   RouteMeasure,
   Track,
+  coverFor,
   followTarget,
   schedulePasses,
 } from "@/services/chase";
@@ -133,11 +134,22 @@ function signedDelta(a: number, b: number): number {
  */
 function passHint(cam: Camera, heading: number | null, here: LatLng): string | undefined {
   if (heading == null) return undefined;
-  // PTZ cameras only carry the road's bearing, which says nothing about which
-  // way the lens points right now, so left/right would be invented.
+  // PTZ cameras only say which direction of traffic they cover, not where the
+  // lens points right now, so left/right would be invented. Say which lanes.
   if (cam.omni || !cam.directions.some((d) => Number.isFinite(d))) {
-    const dirs = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"];
-    return `Look for your car in the ${dirs[Math.round(heading / 45) % 8]}bound lanes`;
+    const dirs = ["north", "east", "south", "west"];
+    const watches =
+      cam.roadBearing != null ? `${dirs[Math.round(cam.roadBearing / 90) % 4]}bound` : null;
+    switch (coverFor(cam, heading)) {
+      case "yours":
+        return `Watches ${watches} traffic, your direction: look in the lanes it's covering`;
+      case "opposite":
+        return `Watches ${watches} traffic, the other way: you'll be across the median, if in view`;
+      case "crossing":
+        return `Watches the cross road (${watches}): you may only show up crossing the picture`;
+      default:
+        return `Look for your car in the ${["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"][Math.round(heading / 45) % 8]}bound lanes`;
+    }
   }
   const facing = aimBearingFor(cam);
   if (facing == null) return undefined;
@@ -596,11 +608,13 @@ export function DriveMode({
         return {
           c: p.cam,
           d: Math.abs(p.along),
-          note: !Number.isFinite(p.at)
-            ? formatDistance(p.along)
-            : shownIn > 0
-              ? `you in ~${Math.ceil(shownIn)}s`
-              : "played",
+          note:
+            (!Number.isFinite(p.at)
+              ? formatDistance(p.along)
+              : shownIn > 0
+                ? `you in ~${Math.ceil(shownIn)}s`
+                : "played") +
+            (p.cover === "yours" ? " · your side" : p.cover === "opposite" ? " · far side" : p.cover === "crossing" ? " · cross road" : ""),
         };
       })
     : upcoming;

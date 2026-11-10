@@ -147,8 +147,31 @@ export class RouteMeasure {
   }
 }
 
+/**
+ * Which traffic a live camera watches, compared with the way you're going.
+ * SCDOT tags each camera with the direction it covers ("covering NB
+ * traffic"); the exact aim isn't published and operators re-aim them, so this
+ * is the best available guess at whether you'll be in the picture.
+ */
+export type Cover = "yours" | "opposite" | "crossing" | "unknown";
+
+export function coverFor(cam: Camera, heading: number | null): Cover {
+  if (heading == null || cam.roadBearing == null || !Number.isFinite(cam.roadBearing)) {
+    return "unknown";
+  }
+  const d = bearingDelta(heading, cam.roadBearing);
+  return d <= 60 ? "yours" : d >= 120 ? "opposite" : "crossing";
+}
+
+const COVER_RANK: Record<Cover, number> = { yours: 0, unknown: 1, opposite: 2, crossing: 3 };
+
+/** Cameras this close together (one each way at an interchange) are a pair. */
+const PAIR_METERS = 250;
+
 export interface ChasePass {
   cam: Camera;
+  /** Whether it watches your direction of travel. */
+  cover: Cover;
   /** Wall-clock ms you pass (or passed) closest to the camera. */
   at: number;
   /** True once the GPS track has actually gone by it. */
@@ -183,7 +206,7 @@ export function schedulePasses(opts: {
     const passed = track.passOf(cam);
     if (passed) {
       if (now - passed.t < PASS_KEEP_MS) {
-        out.push({ cam, at: passed.t, actual: true, along: -d });
+        out.push({ cam, at: passed.t, actual: true, along: -d, cover: coverFor(cam, heading) });
       }
       continue;
     }
@@ -206,10 +229,22 @@ export function schedulePasses(opts: {
     if (along == null || along < 0 || along > LOOKAHEAD_M) continue;
 
     const at = speed && speed > 1 ? now + (along / speed) * 1000 : Number.POSITIVE_INFINITY;
-    out.push({ cam, at, actual: false, along });
+    out.push({ cam, at, actual: false, along, cover: coverFor(cam, heading) });
   }
 
-  return out.sort((a, b) => a.at - b.at || a.along - b.along);
+  out.sort((a, b) => a.at - b.at || a.along - b.along);
+  // Where SCDOT has a camera for each direction side by side, keep the one
+  // watching your side; the other would show the far lanes, if you at all.
+  return out.filter(
+    (p) =>
+      !out.some(
+        (q) =>
+          q !== p &&
+          COVER_RANK[q.cover] < COVER_RANK[p.cover] &&
+          Math.abs(q.at - p.at) < 20000 &&
+          haversineMeters(q.cam, p.cam) < PAIR_METERS,
+      ),
+  );
 }
 
 /**
@@ -218,5 +253,8 @@ export function schedulePasses(opts: {
  * played gives the next stream the most time to connect before you arrive.
  */
 export function followTarget(passes: ChasePass[], delayedNow: number): ChasePass | null {
-  return passes.find((p) => p.at + FOLLOW_AFTER_MS > delayedNow) ?? null;
+  // A camera on a road you only cross shows you for a second, if at all.
+  const watchable = passes.filter((p) => p.cover !== "crossing");
+  const pool = watchable.length ? watchable : passes;
+  return pool.find((p) => p.at + FOLLOW_AFTER_MS > delayedNow) ?? null;
 }
