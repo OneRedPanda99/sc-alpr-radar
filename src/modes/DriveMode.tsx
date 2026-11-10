@@ -16,6 +16,8 @@ import { aimBearingFor } from "@/services/symbols";
 import { LayersPanel } from "@/components/LayersPanel";
 import { PlaceInput } from "@/components/PlaceInput";
 import { LiveCamList } from "@/components/LiveCamList";
+import { ClipLibrary } from "@/components/ClipLibrary";
+import { useClipsStore } from "@/services/clips";
 import {
   DEFAULT_LAG_MS,
   RouteMeasure,
@@ -32,6 +34,8 @@ import { useWakeLock } from "@/hooks/useWakeLock";
 import {
   AlertTracker,
   playAlert,
+  speak,
+  spokenDistance,
   unlockAudio,
 } from "@/services/alertEngine";
 import {
@@ -48,11 +52,29 @@ import {
   reverseGeocode,
 } from "@/services/routing";
 import { KIND_LABELS } from "@/services/brand";
+import { deadEndNear } from "@/services/deadEnds";
 import {
+  DriveRecorder,
+  PASS_METERS,
+  monthText,
+  monthTotals,
+  saveDrive,
+  type DriveRecord,
+} from "@/services/driveLog";
+import {
+  alertContains,
+  alertsAsGeoJSON,
+  alertsOnLine,
+  untilText,
+  useWeatherStore,
+} from "@/services/weather";
+import {
+  REPORT_TYPES,
   addReport,
   freshness,
   removeReport,
   updateReport,
+  type ReportType,
 } from "@/services/policeReports";
 import { makeIsAlertable, makeIsShown } from "@/services/layers";
 import { useMovingAircraft } from "@/hooks/useMovingAircraft";
@@ -154,6 +176,7 @@ export function DriveMode({
     alertSound,
     basemap,
     osmLayers,
+    spokenAlerts,
     set: setSetting,
   } = useSettingsStore();
 
@@ -180,9 +203,14 @@ export function DriveMode({
   const [look, setLook] = useState<{ label: string; point: LatLng; token: number } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [clips, setClips] = useState<{ url: string; name: string; at: number }[]>([]);
-  /** The report you just made, for the cruiser / on foot / undo choice. */
-  const [marked, setMarked] = useState<{ id: string; onFoot: boolean } | null>(null);
+  const clips = useClipsStore((s) => s.clips);
+  const addClip = useClipsStore((s) => s.add);
+  /** Builds this drive's record; the summary shows when you stop. */
+  const recorderRef = useRef<DriveRecorder | null>(null);
+  const lastFixRef = useRef<LatLng | null>(null);
+  const [summary, setSummary] = useState<DriveRecord | null>(null);
+  /** The report you just made, for changing its type or undoing it. */
+  const [marked, setMarked] = useState<{ id: string; type: ReportType } | null>(null);
   const { fix, error } = useGeolocation({ enabled: driving });
   useWakeLock(driving);
 
@@ -291,6 +319,30 @@ export function DriveMode({
 
   const here = fix?.point ?? browseCenter;
 
+  // --- Drive log: distance and what you actually drove past ----------------
+  useEffect(() => {
+    const rec = recorderRef.current;
+    if (!driving || !fix || !rec) return;
+    const prev = lastFixRef.current;
+    rec.move(fix.point, prev ? haversineMeters(prev, fix.point) : 0);
+    lastFixRef.current = fix.point;
+    for (const h of grid?.within(fix.point, PASS_METERS) ?? []) rec.pass(h.camera);
+  }, [driving, fix, grid]);
+
+  const stopDrive = () => {
+    const rec = recorderRef.current;
+    if (rec) {
+      const record = rec.finish(clips.filter((c) => c.at >= rec.start).length);
+      // A few seconds parked isn't a drive worth keeping.
+      if (record.meters > 200) {
+        saveDrive(record);
+        setSummary(record);
+      }
+    }
+    recorderRef.current = null;
+    setDriving(false);
+  };
+
   // --- Alerts ---------------------------------------------------------------
   useEffect(() => {
     if (!driving || !fix || !grid) return;
@@ -316,6 +368,9 @@ export function DriveMode({
             ? 1 - Math.min(1, nearest.distance / radiusMeters)
             : 0.45;
         playAlert({ intensity, sound: alertSound });
+        if (spokenAlerts && nearest) {
+          speak(`${spokenName(nearest.camera)} in ${spokenDistance(nearest.distance)}`);
+        }
       }
     }
   }, [
@@ -370,7 +425,7 @@ export function DriveMode({
     if (!here) return;
     const r = addReport(here);
     refreshReports();
-    setMarked({ id: r.id, onFoot: false });
+    setMarked({ id: r.id, type: r.type });
   };
   useEffect(() => {
     if (!marked) return;
@@ -405,6 +460,10 @@ export function DriveMode({
     return best;
   }, [driving, fix, dataset, isShown]);
 
+  useEffect(() => {
+    if (policeAhead) recorderRef.current?.sawPolice(policeAhead.cam.id);
+  }, [policeAhead]);
+
   // One chirp when a police aircraft or a circling one first shows up; your
   // own reports already alert through the normal camera alerts.
   const airAlertedRef = useRef(new Set<string>());
@@ -415,7 +474,59 @@ export function DriveMode({
     if (airAlertedRef.current.has(key)) return;
     airAlertedRef.current.add(key);
     playAlert({ intensity: 0.55, sound: alertSound });
-  }, [policeAhead, muted, alertSound]);
+    if (spokenAlerts) {
+      speak(`${c.lawEnforcement ? "Police aircraft" : "Aircraft"}${c.circling ? " circling" : ""} nearby`);
+    }
+  }, [policeAhead, muted, alertSound, spokenAlerts]);
+
+  // --- Weather: flooding and the like, where you are or on your route -------
+  const weatherAlerts = useWeatherStore((s) => s.alerts);
+  const showWeather = settings.showWeather;
+  const weatherFC = useMemo(
+    () => (showWeather ? alertsAsGeoJSON(weatherAlerts) : null),
+    [showWeather, weatherAlerts],
+  );
+  const weatherHit = useMemo(() => {
+    if (!showWeather || !weatherAlerts.length || !here) return null;
+    const at = weatherAlerts.find((a) => alertContains(a, here));
+    if (at) return { alert: at, where: "here" };
+    const onRoute = route ? alertsOnLine(weatherAlerts, route.coordinates)[0] : undefined;
+    return onRoute ? { alert: onRoute, where: "on your route" } : null;
+  }, [showWeather, weatherAlerts, here, route]);
+  const weatherSaidRef = useRef("");
+  useEffect(() => {
+    const key = weatherHit ? `${weatherHit.alert.id}:${weatherHit.where}` : "";
+    if (!driving || key === weatherSaidRef.current) return;
+    weatherSaidRef.current = key;
+    if (weatherHit && !muted && spokenAlerts) speak(`${weatherHit.alert.event} ${weatherHit.where}`, 0);
+  }, [weatherHit, driving, muted, spokenAlerts]);
+
+  // --- No-go roads: don't turn into something with no way out ---------------
+  const noGo = useMemo(() => {
+    if (!driving || !fix || !osmLayers.includes("deadends")) return null;
+    const inside = deadEndNear(fix.point, 12);
+    if (inside) return { inside: true, name: String(inside.properties?.name ?? "") };
+    if (fix.heading == null) return null;
+    // A point a few seconds up the road.
+    const ahead = 70;
+    const rad = (fix.heading * Math.PI) / 180;
+    const p = {
+      lat: fix.point.lat + (ahead * Math.cos(rad)) / 110540,
+      lon: fix.point.lon + (ahead * Math.sin(rad)) / (111320 * Math.cos((fix.point.lat * Math.PI) / 180)),
+    };
+    const hit = deadEndNear(p, 18);
+    return hit ? { inside: false, name: String(hit.properties?.name ?? "") } : null;
+  }, [driving, fix, osmLayers]);
+
+  // Say the no-go warning once per road, not every second you're near it.
+  const noGoSaidRef = useRef("");
+  useEffect(() => {
+    const key = noGo ? `${noGo.inside}:${noGo.name}` : "";
+    if (key === noGoSaidRef.current) return;
+    noGoSaidRef.current = key;
+    if (!noGo || muted || !spokenAlerts) return;
+    speak(noGo.inside ? "Dead end. Turn around." : "No-go road ahead", 0);
+  }, [noGo, muted, spokenAlerts]);
 
   // --- Follow me: a delayed live feed of your own drive ----------------------
   // Where you've been, so a delayed frame can be matched to your position then.
@@ -493,8 +604,8 @@ export function DriveMode({
         };
       })
     : upcoming;
-  const handleClip = (url: string) =>
-    setClips((c) => [{ url, name: feedCam?.name ?? "SCDOT camera", at: Date.now() }, ...c].slice(0, 12));
+  const handleClip = (blob: Blob, mime: string) =>
+    addClip(blob, mime, feedCam?.name ?? "SCDOT camera");
 
   const selectedCamera = useMemo(
     () => dataset?.cameras.find((c) => c.id === selectedId) ?? null,
@@ -548,6 +659,9 @@ export function DriveMode({
     await unlockAudio();
     trackerRef.current.reset();
     setSearchOpen(false);
+    setSummary(null);
+    recorderRef.current = new DriveRecorder();
+    lastFixRef.current = null;
     setDriving(true);
   };
 
@@ -655,6 +769,7 @@ export function DriveMode({
                 camera={feedCam}
                 pass={feedPass}
                 onClip={handleClip}
+                onHold={() => setPinnedFeedId(feedCam.id)}
                 onLag={(ms) => {
                   // A stalled or paused player stops meaning anything past this.
                   lagRef.current = ms < MAX_TRUSTED_LAG_MS ? ms : DEFAULT_LAG_MS;
@@ -673,24 +788,7 @@ export function DriveMode({
             : "Live cameras near you show here once location is on. Overwatch lists every live camera."}
         </p>
       )}
-      {clips.length > 0 && (
-        <div className="clips">
-          <h4>Your passes</h4>
-          <ul>
-            {clips.map((c) => (
-              <li key={c.url}>
-                <video src={c.url} controls muted playsInline preload="metadata" />
-                <div className="clip-meta">
-                  <span>{c.name}</span>
-                  <a href={c.url} download={`pass-${new Date(c.at).toISOString().slice(0, 19)}.webm`}>
-                    Save
-                  </a>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <ClipLibrary since={recorderRef.current?.start} title="This drive's passes" />
       {!driving && liveCams.length > 0 && (
         <p className="tip">
           While driving, the camera you're about to pass is timed for you: it shows when you'll
@@ -737,6 +835,7 @@ export function DriveMode({
           onMapClick={handlePlace}
           osmLayers={osmLayers}
           lookAt={look}
+          weather={weatherFC}
           onLongPress={handleLongPress}
         />
 
@@ -899,10 +998,14 @@ export function DriveMode({
               className="map-tool tool-police"
               onClick={markPolice}
               disabled={!here}
-              title={here ? "Mark police at your location (kept on this device, clears in 20 min)" : "Location is off"}
+              title={
+                here
+                  ? "Mark police at your location; change it to a hazard after (kept on this device)"
+                  : "Location is off"
+              }
             >
               <Icon name="shield" />
-              <span>Police</span>
+              <span>Report</span>
             </button>
             {!driving && (
               <button
@@ -923,25 +1026,30 @@ export function DriveMode({
 
         {layersOpen && <LayersPanel onClose={() => setLayersOpen(false)} />}
 
+        {summary && !driving && (
+          <DriveSummary record={summary} onClose={() => setSummary(null)} />
+        )}
+
         {marked && (
           <div className="report-toast" role="status">
             <span className="report-toast-title">
-              <Icon name="shield" /> Police marked here
+              <Icon name="shield" /> Marked here:{" "}
+              {REPORT_TYPES.find((t) => t.type === marked.type)?.label}
             </span>
             <div className="report-toast-actions">
-              {[false, true].map((onFoot) => (
+              {REPORT_TYPES.map((t) => (
                 <button
-                  key={String(onFoot)}
+                  key={t.type}
                   type="button"
-                  className={`chip ${marked.onFoot === onFoot ? "on" : ""}`}
-                  aria-pressed={marked.onFoot === onFoot}
+                  className={`chip ${marked.type === t.type ? "on" : ""}`}
+                  aria-pressed={marked.type === t.type}
                   onClick={() => {
-                    updateReport(marked.id, { onFoot });
+                    updateReport(marked.id, { type: t.type });
                     refreshReports();
-                    setMarked({ ...marked, onFoot });
+                    setMarked({ ...marked, type: t.type });
                   }}
                 >
-                  {onFoot ? "On foot" : "Cruiser"}
+                  <span aria-hidden="true">{t.symbol}</span> {t.label}
                 </button>
               ))}
               <button
@@ -1008,6 +1116,7 @@ export function DriveMode({
                         ? "Couldn't load the camera pack. Check Settings."
                         : "Loading camera pack"}
                   </p>
+                  <MonthLine />
                 </div>
               </div>
 
@@ -1081,6 +1190,35 @@ export function DriveMode({
             </div>
           )}
 
+          {weatherHit && (
+            <div className="weather-hit" role="alert">
+              <span className="no-go-icon" aria-hidden="true">⚠️</span>
+              <div className="police-ahead-text">
+                <span className="police-ahead-title">
+                  {weatherHit.alert.event} {weatherHit.where}
+                </span>
+                <span className="police-ahead-sub">
+                  National Weather Service {untilText(weatherHit.alert)}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {noGo && (
+            <div className="no-go" role="alert">
+              <span className="no-go-icon" aria-hidden="true">⛔</span>
+              <div className="police-ahead-text">
+                <span className="police-ahead-title">
+                  {noGo.inside ? "You're on a no-go road" : "No-go road ahead"}
+                </span>
+                <span className="police-ahead-sub">
+                  {noGo.name ? `${noGo.name}: ` : ""}
+                  {noGo.inside ? "dead end, the way out is back the way you came" : "dead end, no way through"}
+                </span>
+              </div>
+            </div>
+          )}
+
           {policeAhead && <PoliceAheadBanner hit={policeAhead} />}
 
           {driving && nextStop && (
@@ -1116,7 +1254,7 @@ export function DriveMode({
         </div>
 
         {driving && (
-          <button className="stop-btn" onClick={() => setDriving(false)}>
+          <button className="stop-btn" onClick={stopDrive}>
             Stop
           </button>
         )}
@@ -1213,6 +1351,83 @@ function PoliceAheadBanner({ hit }: { hit: { cam: Camera; d: number } }) {
           {formatDistance(d)} {air ? "away" : "ahead"} · {when}
         </span>
       </div>
+    </div>
+  );
+}
+
+/** What to call a camera out loud: short, and the most useful word first. */
+function spokenName(c: Camera): string {
+  if (c.myReport) return `${c.name ?? "Hazard"} reported`;
+  switch (c.kind) {
+    case "alpr":
+      return c.brand === "Flock Safety" ? "Flock camera" : "Plate reader";
+    case "speed":
+      return "Speed camera";
+    case "traffic":
+      return "Traffic camera";
+    case "gunshot":
+      return "Gunshot detector";
+    case "incident":
+      return c.name ?? "Incident";
+    default:
+      return "Camera";
+  }
+}
+
+/** The month so far, once there is one. */
+function MonthLine() {
+  const t = useMemo(() => monthTotals(), []);
+  if (!t.drives) return null;
+  return (
+    <p className="month-line">{monthText(t)}</p>
+  );
+}
+
+/** One screen after each drive: what you passed and what you kept. */
+function DriveSummary({ record, onClose }: { record: DriveRecord; onClose: () => void }) {
+  const mins = Math.max(1, Math.round((record.end - record.start) / 60000));
+  const total = Object.values(record.kinds).reduce((a, b) => a + (b ?? 0), 0);
+  const month = monthTotals();
+  return (
+    <div className="drive-summary" role="dialog" aria-label="Drive summary">
+      <div className="drive-summary-head">
+        <h3>Drive summary</h3>
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
+      </div>
+      <div className="drive-summary-stats">
+        <span>
+          <b>{(record.meters / 1609.34).toFixed(1)}</b> mi
+        </span>
+        <span>
+          <b>{mins}</b> min
+        </span>
+        <span>
+          <b>{total}</b> camera{total === 1 ? "" : "s"} passed
+        </span>
+      </div>
+      {total > 0 ? (
+        <div className="look-nearby">
+          {(Object.entries(record.kinds) as [CameraKind, number][])
+            .sort((a, b) => b[1] - a[1])
+            .map(([kind, n]) => (
+              <span key={kind} className="cam-chip">
+                {n} {KIND_LABELS[kind].replace(/ \(.*\)$/, "").toLowerCase()}
+                {n > 1 && !/s$/.test(KIND_LABELS[kind]) ? "s" : ""}
+              </span>
+            ))}
+          {record.flock > 0 && <span className="cam-chip">{record.flock} Flock</span>}
+        </div>
+      ) : (
+        <p className="tip">No cameras within {PASS_METERS} m of your path.</p>
+      )}
+      <p className="tip">
+        {record.police > 0 ? `Police activity seen ahead: ${record.police}. ` : ""}
+        {record.clips > 0 ? "" : "No pass clips this time."}
+      </p>
+      {record.clips > 0 && <ClipLibrary since={record.start} title="Clips from this drive" />}
+      <p className="month-line">{monthText(month)}</p>
     </div>
   );
 }

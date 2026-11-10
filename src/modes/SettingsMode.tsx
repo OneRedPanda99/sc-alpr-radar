@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { deviceReport } from "@/services/device";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useCameraStore } from "@/store/cameraStore";
 import { ALERT_SOUNDS, playAlert, unlockAudio } from "@/services/alertEngine";
@@ -65,6 +66,11 @@ export function SettingsMode() {
           </div>
         </label>
 
+        <Toggle
+          label='Speak alerts ("Flock camera in 400 feet")'
+          checked={s.spokenAlerts}
+          onChange={(v) => s.set("spokenAlerts", v)}
+        />
         <Toggle
           label="Escalate as you get closer"
           checked={s.escalate}
@@ -133,7 +139,33 @@ export function SettingsMode() {
       </section>
 
       <section className="setting-group">
-        <h3>Map</h3>
+        <h3>Display</h3>
+        <label className="setting">
+          <span>Interface size</span>
+          <div className="seg">
+            {(
+              [
+                ["auto", "Auto"],
+                ["normal", "Normal"],
+                ["large", "Large"],
+                ["xl", "Extra large"],
+              ] as const
+            ).map(([v, label]) => (
+              <button
+                key={v}
+                type="button"
+                className={s.uiScale === v ? "seg-on" : ""}
+                onClick={() => s.set("uiScale", v)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </label>
+        <p className="tip" style={{ marginTop: 0 }}>
+          Panels and buttons only; the map keeps its size. Auto picks Large in a Tesla.
+        </p>
+        <DeviceInfo />
         <Toggle
           label="Rotate map to heading while driving"
           checked={s.headingUp}
@@ -255,5 +287,28 @@ function Toggle({
         onChange={(e) => onChange(e.target.checked)}
       />
     </label>
+  );
+}
+
+/**
+ * What this screen and browser actually are. Car and phone browsers differ in
+ * ways that are hard to guess from outside (scale, location, recording), so
+ * show them plainly.
+ */
+function DeviceInfo() {
+  const [info, setInfo] = useState(deviceReport);
+  useEffect(() => {
+    const update = () => setInfo(deviceReport());
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+  return (
+    <div className="device-info">
+      {info.map(([k, v]) => (
+        <div key={k}>
+          <span className="meta-label">{k}</span> {v}
+        </div>
+      ))}
+    </div>
   );
 }

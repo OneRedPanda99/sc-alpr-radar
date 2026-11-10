@@ -14,6 +14,13 @@
   outline-offset: 2px;
 }
 
+/* iPhone Safari enlarges text by itself in landscape unless told not to,
+   which made everything look oversized and out of proportion. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 button {
   font-family: inherit;
 }
@@ -2474,3 +2481,206 @@ button:disabled {
     margin-right: 68px;
   }
 }
+
+/* No-go road warning: same shape as the police banner, in red. */
+.no-go {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(60, 8, 8, 0.92);
+  border: 1px solid rgba(255, 59, 59, 0.7);
+  box-shadow: inset 4px 0 0 #ff3b3b;
+}
+
+.no-go-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* NWS warning: where you are, on your route, or on a planned route card. */
+.weather-hit {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(8, 28, 60, 0.92);
+  border: 1px solid rgba(47, 128, 237, 0.7);
+  box-shadow: inset 4px 0 0 #2f80ed;
+}
+
+.weather-hit.inline {
+  margin: 10px 0 0;
+}
+
+/* --- Drive log ------------------------------------------------------------- */
+.month-line {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.drive-summary {
+  position: absolute;
+  z-index: 9;
+  left: max(12px, env(safe-area-inset-left));
+  right: 82px;
+  bottom: max(34px, env(safe-area-inset-bottom));
+  max-width: 440px;
+  max-height: calc(100% - 140px);
+  overflow-y: auto;
+  padding: 14px 16px;
+  background: var(--panel-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  animation: pop-in 0.18s var(--ease);
+}
+
+.drive-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.drive-summary-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.drive-summary-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 8px 0 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.drive-summary-stats b {
+  font-size: 20px;
+  color: var(--text);
+}
+
+/* --- Interface size --------------------------------------------------------
+   Zoom the panels, never the map: MapLibre's taps and the GPS dot stay exact. */
+html[data-ui="large"] :is(.drive-hud, .map-tools, .drive-rail, .tabbar, .feed-float, .look-card,
+    .detail-card, .report-toast, .drive-summary, .layers-panel, .map-search, .stop-btn,
+    .planner-sheet > *, .watch-panel, .settings-mode) {
+  zoom: 1.25;
+}
+
+html[data-ui="xl"] :is(.drive-hud, .map-tools, .drive-rail, .tabbar, .feed-float, .look-card,
+    .detail-card, .report-toast, .drive-summary, .layers-panel, .map-search, .stop-btn,
+    .planner-sheet > *, .watch-panel, .settings-mode) {
+  zoom: 1.45;
+}
+
+/* Zoomed, the side panel would crowd the map out; start it narrower. */
+html[data-ui="large"] .drive-rail {
+  width: 320px;
+}
+
+html[data-ui="xl"] .drive-rail {
+  width: 290px;
+}
+
+.device-info {
+  display: grid;
+  gap: 2px;
+  margin: 4px 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.clips-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.clips-head h4 {
+  margin: 0;
+}
+
+.clip-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.clip-meta span {
+  flex: 1;
+  min-width: 0;
+}
+
+/* --- Your car on the feed ------------------------------------------------- */
+.car-dot {
+  position: absolute;
+  z-index: 3;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(22, 224, 184, 0.45), 0 0 14px rgba(22, 224, 184, 0.8);
+  pointer-events: none;
+  transition: left 0.25s linear, top 0.25s linear;
+}
+
+.car-dot-label {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(7, 11, 16, 0.85);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.live-cam.marking {
+  cursor: crosshair;
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.mark-prompt {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: 44px;
+  transform: translateX(-50%);
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.pass-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pass-actions:empty {
+  display: none;
+}
+
+.pass-overlay .pass-actions .live-cam-btn {
+  margin-top: 0;
+}
+

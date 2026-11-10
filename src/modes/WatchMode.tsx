@@ -3,6 +3,7 @@ import type { Camera } from "@/types";
 import { MapView } from "@/components/MapView";
 import { LiveCameraVideo, isLiveCamera } from "@/components/LiveCameraImage";
 import { LiveCamList } from "@/components/LiveCamList";
+import { ClipLibrary } from "@/components/ClipLibrary";
 import { useCameraStore } from "@/store/cameraStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { makeIsShown } from "@/services/layers";
@@ -131,6 +132,10 @@ export function WatchMode() {
             selectedId={watched?.id ?? null}
             onPick={setWatchId}
           />
+        </section>
+
+        <section className="watch-section">
+          <ClipLibrary title="Your pass clips" />
         </section>
 
         <section className="watch-section">

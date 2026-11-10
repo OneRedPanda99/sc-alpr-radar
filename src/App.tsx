@@ -5,6 +5,8 @@ import { RouteMode } from "@/modes/RouteMode";
 import { SettingsMode } from "@/modes/SettingsMode";
 import { WatchMode } from "@/modes/WatchMode";
 import { useCameraStore } from "@/store/cameraStore";
+import { useWeatherStore } from "@/services/weather";
+import { isCarBrowser } from "@/services/device";
 import { useSettingsStore } from "@/store/settingsStore";
 import { Icon, type IconName } from "@/components/Icon";
 import { FALLBACK_CENTER } from "@/services/geo";
@@ -35,6 +37,15 @@ export default function App() {
   const refreshIncidents = useCameraStore((s) => s.refreshIncidents);
   const refreshAircraft = useCameraStore((s) => s.refreshAircraft);
   const refreshReports = useCameraStore((s) => s.refreshReports);
+  const refreshWeather = useWeatherStore((s) => s.refresh);
+  const showWeather = useSettingsStore((s) => s.showWeather);
+  const uiScale = useSettingsStore((s) => s.uiScale);
+
+  // Panels and buttons scale up (never the map, so taps on it stay exact).
+  useEffect(() => {
+    const resolved = uiScale === "auto" ? (isCarBrowser() ? "large" : "normal") : uiScale;
+    document.documentElement.dataset.ui = resolved;
+  }, [uiScale]);
   const showAircraft = useSettingsStore((s) => s.showAircraft);
 
   const go = useCallback((m: AppMode) => {
@@ -91,6 +102,21 @@ export default function App() {
       document.removeEventListener("visibilitychange", tick);
     };
   }, [refreshIncidents]);
+
+  // NWS warnings change by the minute in a storm; poll while they're shown.
+  useEffect(() => {
+    if (!showWeather) return;
+    const tick = () => {
+      if (document.visibilityState === "visible") void refreshWeather();
+    };
+    tick();
+    const timer = setInterval(tick, 5 * 60 * 1000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [showWeather, refreshWeather]);
 
   // "Police here" reports age out after 20 minutes; re-merge so they drop off
   // the map and stop alerting on time.

@@ -1,4 +1,5 @@
 import type { Camera } from "@/types";
+import { reportSymbol } from "@/services/policeReports";
 
 /**
  * Symbol per incident type, matched against the headline the feed gives us
@@ -47,7 +48,7 @@ export function mapSymbol(camera: Camera): string | null {
 }
 
 export function incidentSymbol(camera: Camera): string {
-  if (camera.policeReport) return "🚔";
+  if (camera.myReport) return reportSymbol(camera.name) ?? "❗";
   const text = `${camera.name ?? ""} ${camera.purpose ?? ""}`;
   for (const [pattern, symbol] of INCIDENT_SYMBOLS) {
     if (pattern.test(text)) return symbol;

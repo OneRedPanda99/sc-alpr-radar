@@ -1,3 +1,6 @@
+import { fetchDeadEnds } from "@/services/deadEnds";
+import { overpassQuery } from "@/services/overpass";
+
 /**
  * On-demand OpenStreetMap detail layers.
  *
@@ -20,9 +23,21 @@ export interface OsmCategory {
   minZoom: number;
   /** Line features (rendered as lines, fetched with full geometry). */
   lines?: boolean;
+  /** Worked out from the road graph rather than queried by tag. */
+  computed?: boolean;
 }
 
 export const OSM_CATEGORIES: OsmCategory[] = [
+  {
+    id: "deadends",
+    label: "No-go roads (dead ends)",
+    color: "#ff3b3b",
+    query: "",
+    match: () => false,
+    minZoom: 13,
+    lines: true,
+    computed: true,
+  },
   {
     id: "signals",
     label: "Traffic lights",
@@ -153,11 +168,6 @@ export const OSM_CATEGORIES: OsmCategory[] = [
 
 export const OSM_CATEGORY_BY_ID = new Map(OSM_CATEGORIES.map((c) => [c.id, c]));
 
-const OVERPASS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
-];
-
 interface OverpassElement {
   type: "node" | "way" | "relation";
   id: number;
@@ -180,9 +190,17 @@ export async function fetchOsmDetails(
   bbox: Bbox,
   signal?: AbortSignal,
 ): Promise<GeoJSON.FeatureCollection> {
+  // Computed layers run their own query alongside the tag lookups.
+  const computed = categories.some((c) => c.id === "deadends")
+    ? fetchDeadEnds(bbox, signal)
+    : null;
+  // If the tag query fails first, nobody awaits this one; keep it quiet.
+  computed?.catch(() => {});
+  const tagged = categories.filter((c) => !c.computed);
+  if (!tagged.length) return computed ?? { type: "FeatureCollection", features: [] };
   const box = bbox.map((n) => n.toFixed(5)).join(",");
-  const points = categories.filter((c) => !c.lines);
-  const lines = categories.filter((c) => c.lines);
+  const points = tagged.filter((c) => !c.lines);
+  const lines = tagged.filter((c) => c.lines);
   let q = "[out:json][timeout:25];";
   if (points.length) {
     q += `(${points.map((c) => c.query.replaceAll("{{bbox}}", box)).join("")});out center tags 3000;`;
@@ -191,23 +209,10 @@ export async function fetchOsmDetails(
     q += `(${lines.map((c) => c.query.replaceAll("{{bbox}}", box)).join("")});out geom tags 1500;`;
   }
 
-  let lastErr: unknown = null;
-  for (const url of OVERPASS) {
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        body: new URLSearchParams({ data: q }),
-        signal,
-      });
-      if (!res.ok) throw new Error(`Overpass ${res.status}`);
-      const json = (await res.json()) as { elements: OverpassElement[] };
-      return toFeatures(json.elements, categories);
-    } catch (e) {
-      if ((e as Error).name === "AbortError") throw e;
-      lastErr = e;
-    }
-  }
-  throw lastErr ?? new Error("Overpass unavailable");
+  const json = await overpassQuery<{ elements: OverpassElement[] }>(q, signal);
+  const fc = toFeatures(json.elements, tagged);
+  if (computed) fc.features.push(...(await computed).features);
+  return fc;
 }
 
 function toFeatures(

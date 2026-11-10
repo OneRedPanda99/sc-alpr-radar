@@ -7,6 +7,7 @@ import { LayersPanel } from "@/components/LayersPanel";
 import { Icon } from "@/components/Icon";
 import { makeIsShown } from "@/services/layers";
 import { useCameraStore } from "@/store/cameraStore";
+import { alertsAsGeoJSON, alertsOnLine, untilText, useWeatherStore } from "@/services/weather";
 import { useSettingsStore } from "@/store/settingsStore";
 import {
   camerasNearRoute,
@@ -92,6 +93,11 @@ export function RouteMode({
   const { dataset } = useCameraStore();
   const settings = useSettingsStore();
   const { showFov, basemap, osmLayers, set: setSetting } = settings;
+  const weatherAlerts = useWeatherStore((s) => s.alerts);
+  const weatherFC = useMemo(
+    () => (settings.showWeather ? alertsAsGeoJSON(weatherAlerts) : null),
+    [settings.showWeather, weatherAlerts],
+  );
   const avoid: AvoidOpts = {
     avoidFlock: settings.avoidFlock,
     avoidOtherAlpr: settings.avoidOtherAlpr,
@@ -446,6 +452,7 @@ export function RouteMode({
           placing={placingStopId != null}
           onMapClick={handleMapPlace}
           osmLayers={osmLayers}
+          weather={weatherFC}
         />
         <div className="map-tools" role="toolbar" aria-label="Map tools">
           <div className="tool-group">
@@ -764,6 +771,19 @@ export function RouteMode({
                       />
                     </div>
                   )}
+
+                  {settings.showWeather &&
+                    alertsOnLine(weatherAlerts, route.coordinates).map((a) => (
+                      <div key={a.id} className="weather-hit inline" role="alert">
+                        <span className="no-go-icon" aria-hidden="true">⚠️</span>
+                        <div className="police-ahead-text">
+                          <span className="police-ahead-title">{a.event} on this route</span>
+                          <span className="police-ahead-sub">
+                            National Weather Service {untilText(a)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
 
                   <div className="route-cams">
                     {routeCams.length === 0 ? (

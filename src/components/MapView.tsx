@@ -48,6 +48,8 @@ interface MapViewProps {
   onReady?: (map: maplibregl.Map) => void;
   /** Turn the map to this bearing. Bumping the token re-triggers the turn. */
   aimBearing?: { bearing: number; token: number } | null;
+  /** Weather warning areas, shaded under the roads and routes. */
+  weather?: GeoJSON.FeatureCollection | null;
   /** Other candidate routes (Plan B/C, the fastest alternative), drawn faint. */
   altRoutes?: { coordinates: [number, number][]; color?: string }[];
   /** Colour of the main route line. */
@@ -210,6 +212,7 @@ export function MapView({
   onMapClick,
   onReady,
   aimBearing,
+  weather,
   altRoutes,
   routeColor = "#16e0b8",
   stops,
@@ -303,6 +306,20 @@ export function MapView({
         },
       });
 
+      map.addSource("weather", { type: "geojson", data: EMPTY_FC });
+      map.addLayer({
+        id: "weather-fill",
+        type: "fill",
+        source: "weather",
+        paint: { "fill-color": ["get", "color"], "fill-opacity": 0.14 },
+      });
+      map.addLayer({
+        id: "weather-line",
+        type: "line",
+        source: "weather",
+        paint: { "line-color": ["get", "color"], "line-width": 1.5, "line-opacity": 0.7 },
+      });
+
       // OSM detail lines (speed limits) sit under the routes so a planned
       // route is never hidden by road colouring.
       map.addSource(OSM_LINES, { type: "geojson", data: EMPTY_FC });
@@ -313,8 +330,18 @@ export function MapView({
         layout: { "line-cap": "round" },
         paint: {
           "line-color": ["get", "color"],
-          "line-width": 3,
-          "line-opacity": 0.55,
+          // No-go roads have to read at a glance; the rest is background detail.
+          // (MapLibre only allows zoom at the top of an interpolate.)
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            12,
+            ["case", ["==", ["get", "category"], "deadends"], 3, 3],
+            16,
+            ["case", ["==", ["get", "category"], "deadends"], 6, 3],
+          ],
+          "line-opacity": ["case", ["==", ["get", "category"], "deadends"], 0.8, 0.55],
         },
       });
       // Reuse whatever font the basemap ships, so labels never request a
@@ -661,6 +688,13 @@ export function MapView({
     if (!map || !ready || !map.getLayer("route-line")) return;
     map.setPaintProperty("route-line", "line-color", routeColor);
   }, [routeColor, ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const src = map.getSource("weather") as maplibregl.GeoJSONSource | undefined;
+    src?.setData(weather ?? EMPTY_FC);
+  }, [weather, ready]);
 
   useEffect(() => {
     const map = mapRef.current;

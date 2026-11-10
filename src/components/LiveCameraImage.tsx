@@ -2,6 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import type { Camera } from "@/types";
 import { useSettingsStore } from "@/store/settingsStore";
+import {
+  addMark,
+  clearMarks,
+  marksFor,
+  placeOnFrame,
+  type CalibMark,
+} from "@/services/camCalib";
 
 /**
  * Tone curve for the headlight dimmer.
@@ -68,6 +75,7 @@ export function LiveCameraVideo({
   pass,
   onClip,
   onLag,
+  onHold,
 }: {
   camera: Camera;
   onError?: () => void;
@@ -76,12 +84,16 @@ export function LiveCameraVideo({
   /** Your pass by this camera, to time the "you're on screen" cue. */
   pass?: PassInfo | null;
   /** Receives a recorded clip (blob URL) of the moment you pass. */
-  onClip?: (url: string) => void;
+  onClip?: (blob: Blob, mime: string) => void;
   /** Receives the measured delay behind real time, for scheduling other feeds. */
   onLag?: (ms: number) => void;
+  /** You paused, stepped back or started marking: keep this camera on screen. */
+  onHold?: () => void;
 }) {
   const onLagRef = useRef(onLag);
   onLagRef.current = onLag;
+  const onHoldRef = useRef(onHold);
+  onHoldRef.current = onHold;
   const videoRef = useRef<HTMLVideoElement>(null);
   /** Latest playlist edge (media seconds) and the wall time it appeared. */
   const edgeRef = useRef<{ media: number; wall: number } | null>(null);
@@ -99,6 +111,15 @@ export function LiveCameraVideo({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{ x: number; y: number } | null>(null);
+  /** Your taps on this camera's picture, for placing the car dot. */
+  const [marks, setMarks] = useState<CalibMark[]>(() => marksFor(camera.id));
+  const [marking, setMarking] = useState(false);
+  const [markNote, setMarkNote] = useState<string | null>(null);
+  useEffect(() => {
+    setMarks(marksFor(camera.id));
+    setMarking(false);
+    setMarkNote(null);
+  }, [camera.id]);
 
   // Reset the viewer when the camera changes; a pan into the corner of the
   // previous camera's frame is meaningless on the next one.
@@ -122,6 +143,7 @@ export function LiveCameraVideo({
     } else {
       v.pause();
       setPaused(true);
+      onHoldRef.current?.();
     }
   }, []);
 
@@ -134,6 +156,7 @@ export function LiveCameraVideo({
     v.currentTime = Math.max(floor + 0.1, v.currentTime + seconds);
     v.pause();
     setPaused(true);
+    onHoldRef.current?.();
   }, []);
 
   const goLive = useCallback(() => {
@@ -201,25 +224,32 @@ export function LiveCameraVideo({
   // properly once you've parked. The live window is only ~15s, so without a
   // recording the moment is gone for good.
   useEffect(() => {
-    const v = videoRef.current as
-      | (HTMLVideoElement & { captureStream?: () => MediaStream })
-      | null;
+    const v = videoRef.current;
     if (!pass || frameWall == null || !v || !onClip || clipDoneRef.current) return;
     const rec = recorderRef.current;
     if (!rec && frameWall > pass.at - 6000 && frameWall < pass.at + 2000) {
-      if (!v.captureStream || typeof MediaRecorder === "undefined") return;
+      const capture = captureVideo(v);
+      if (!capture || typeof MediaRecorder === "undefined") {
+        clipDoneRef.current = true;
+        return;
+      }
       try {
         const chunks: Blob[] = [];
-        const r = new MediaRecorder(v.captureStream());
+        // Safari records MP4; Chrome (and the Tesla browser) record WebM.
+        const mime = MediaRecorder.isTypeSupported?.("video/mp4") ? "video/mp4" : "";
+        const r = new MediaRecorder(capture.stream, mime ? { mimeType: mime } : undefined);
         r.ondataavailable = (ev) => {
           if (ev.data.size) chunks.push(ev.data);
         };
         r.onstop = () => {
-          if (chunks.length) onClip(URL.createObjectURL(new Blob(chunks, { type: r.mimeType })));
+          capture.stop();
+          const type = r.mimeType || mime || "video/webm";
+          if (chunks.length) onClip(new Blob(chunks, { type }), type);
         };
         r.start(1000);
         recorderRef.current = r;
       } catch {
+        capture.stop();
         clipDoneRef.current = true; // unsupported here; don't retry every tick
       }
     } else if (rec && frameWall > pass.at + 7000) {
@@ -461,6 +491,65 @@ export function LiveCameraVideo({
     );
   }
 
+  /** Metres along the road at time t: negative before the camera, positive after. */
+  const signedAt = (t: number | null): number | null => {
+    if (t == null || !pass?.distanceAt) return null;
+    const d = pass.distanceAt(t);
+    return d == null ? null : t < pass.at ? -d : d;
+  };
+
+  /** The picture's box inside the player (object-fit: cover crops it). */
+  const frameBox = () => {
+    const v = videoRef.current;
+    const el = wrapRef.current;
+    if (!v || !el || !v.videoWidth) return null;
+    const r = el.getBoundingClientRect();
+    const scale = Math.max(r.width / v.videoWidth, r.height / v.videoHeight);
+    const w = v.videoWidth * scale;
+    const h = v.videoHeight * scale;
+    return { r, w, h, ox: (r.width - w) / 2, oy: (r.height - h) / 2 };
+  };
+
+  const startMarking = () => {
+    // A frame has to hold still to tap the car in it; zoom would skew the spot.
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    videoRef.current?.pause();
+    setPaused(true);
+    onHold?.();
+    setMarkNote(null);
+    setMarking(true);
+  };
+
+  const onMarkTap = (e: React.MouseEvent) => {
+    // Taps on the player's own buttons aren't taps on the car.
+    if (!marking || (e.target as HTMLElement).closest("button")) return;
+    const box = frameBox();
+    const s = signedAt(frameWall);
+    if (!box) return;
+    if (s == null || Math.abs(s) > 1500) {
+      setMarkNote("This frame is from before or after your drive was tracked. Step to your pass first.");
+      setMarking(false);
+      return;
+    }
+    const x = (e.clientX - box.r.left - box.ox) / box.w;
+    const y = (e.clientY - box.r.top - box.oy) / box.h;
+    const next = addMark(camera.id, { x, y, s });
+    setMarks(next);
+    setMarking(false);
+    setMarkNote(
+      next.length < 2
+        ? "Got it. Mark your car once more in a frame further along your pass to switch on the dot."
+        : `${next.length} marks saved. The dot will follow you on this camera.`,
+    );
+  };
+
+  // Where you'd be in the frame on screen, from your marks on this camera.
+  const nowS = signedAt(frameWall);
+  const spot = nowS != null && zoom === 1 ? placeOnFrame(marks, nowS) : null;
+  const box = spot ? frameBox() : null;
+  const dot = spot && box ? { left: box.ox + spot.x * box.w, top: box.oy + spot.y * box.h } : null;
+
   // Over the picture it hides the very car you're looking for, so it sits
   // under the video, except in fullscreen where there is no "under".
   const overlay = pass && (
@@ -471,18 +560,30 @@ export function LiveCameraVideo({
       onReplay={replayPass}
       recording={!!recorderRef.current}
       below={!isFull}
+      marks={marks.length}
+      marking={marking}
+      markNote={markNote}
+      canMark={!!pass.distanceAt}
+      onMark={startMarking}
+      onCancelMark={() => setMarking(false)}
+      onClearMarks={() => {
+        clearMarks(camera.id);
+        setMarks([]);
+        setMarkNote("Marks cleared for this camera.");
+      }}
     />
   );
 
   return (
     <>
       <div
-        className={`live-cam ${zoom > 1 ? "zoomed" : ""} ${
+        className={`live-cam ${zoom > 1 ? "zoomed" : ""} ${marking ? "marking" : ""} ${
           pass && frameWall != null && Math.abs(frameWall - pass.at) < ON_SCREEN_WINDOW_MS
             ? "on-screen"
             : ""
         }`}
         ref={wrapRef}
+        onClick={onMarkTap}
         onPointerDown={onPanStart}
         onPointerMove={onPanMove}
         onPointerUp={onPanEnd}
@@ -490,6 +591,8 @@ export function LiveCameraVideo({
       >
         <video
           ref={videoRef}
+          // Lets Safari's canvas recorder read the frames (the streams allow it).
+          crossOrigin="anonymous"
           muted
           playsInline
           autoPlay
@@ -519,6 +622,16 @@ export function LiveCameraVideo({
             </span>
           )}
         </div>
+        {dot && (
+          <span
+            className="car-dot"
+            style={{ left: dot.left, top: dot.top }}
+            title="Where your car should be in this frame (estimated from your marks)"
+          >
+            <span className="car-dot-label">You</span>
+          </span>
+        )}
+        {marking && <div className="mark-prompt">Tap your car in the picture</div>}
         {isFull && overlay}
 
         <div className="live-cam-controls">
@@ -591,6 +704,13 @@ function PassOverlay({
   onReplay,
   recording,
   below,
+  marks,
+  marking,
+  markNote,
+  canMark,
+  onMark,
+  onCancelMark,
+  onClearMarks,
 }: {
   pass: PassInfo;
   frameWall: number | null;
@@ -598,6 +718,13 @@ function PassOverlay({
   onReplay: () => void;
   recording: boolean;
   below: boolean;
+  marks: number;
+  marking: boolean;
+  markNote: string | null;
+  canMark: boolean;
+  onMark: () => void;
+  onCancelMark: () => void;
+  onClearMarks: () => void;
 }) {
   const untilPass = (pass.at - Date.now()) / 1000;
   // Seconds until the frame showing your pass reaches the screen.
@@ -650,11 +777,34 @@ function PassOverlay({
           </span>
         </div>
       )}
-      {past && (
-        <button type="button" className="live-cam-btn" onClick={onReplay}>
-          Replay my pass
-        </button>
-      )}
+      <div className="pass-actions">
+        {past && (
+          <button type="button" className="live-cam-btn" onClick={onReplay}>
+            Replay my pass
+          </button>
+        )}
+        {canMark &&
+          (marking ? (
+            <button type="button" className="live-cam-btn" onClick={onCancelMark}>
+              Cancel marking
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="live-cam-btn"
+              onClick={onMark}
+              title="Pause on a frame where you can see your car, then tap it. Two marks switch on the dot."
+            >
+              Mark my car
+            </button>
+          ))}
+        {marks > 0 && !marking && (
+          <button type="button" className="live-cam-btn" onClick={onClearMarks}>
+            Clear {marks} mark{marks === 1 ? "" : "s"}
+          </button>
+        )}
+      </div>
+      {markNote && <div className="pass-hint">{markNote}</div>}
     </div>
   );
 }
@@ -738,3 +888,31 @@ function LiveCameraStill({
 
 /** Back-compat alias — call sites use the same name for either mode. */
 export const LiveCameraImage = LiveCameraVideo;
+
+/**
+ * A recordable stream of what the player shows. Chrome (and the Tesla
+ * browser) can capture the video element directly; Safari can't, so there
+ * the frames are copied onto a canvas and the canvas is recorded instead.
+ */
+function captureVideo(v: HTMLVideoElement): { stream: MediaStream; stop: () => void } | null {
+  const direct = v as HTMLVideoElement & { captureStream?: () => MediaStream };
+  if (typeof direct.captureStream === "function") {
+    return { stream: direct.captureStream(), stop: () => {} };
+  }
+  const canvas = document.createElement("canvas") as HTMLCanvasElement & {
+    captureStream?: (fps?: number) => MediaStream;
+  };
+  if (typeof canvas.captureStream !== "function" || !v.videoWidth) return null;
+  const scale = Math.min(1, 1280 / v.videoWidth);
+  canvas.width = Math.round(v.videoWidth * scale);
+  canvas.height = Math.round(v.videoHeight * scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  let raf = 0;
+  const draw = () => {
+    ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+    raf = requestAnimationFrame(draw);
+  };
+  draw();
+  return { stream: canvas.captureStream(25), stop: () => cancelAnimationFrame(raf) };
+}
