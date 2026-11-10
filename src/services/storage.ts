@@ -65,6 +65,7 @@ export const DEFAULT_SETTINGS: Settings = {
   alertIncidents: true,
   dimHeadlights: false,
   spokenAlerts: true,
+  uiScale: "auto",
   basemap: "streets",
   avoidFlock: true,
   avoidOtherAlpr: true,

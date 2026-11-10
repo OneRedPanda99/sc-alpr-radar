@@ -249,6 +249,11 @@ export interface Settings {
    * readable. Off by default because it hurts an already-dark daytime feed.
    */
   dimHeadlights: boolean;
+  /**
+   * Size of panels and buttons (never the map). "auto" picks Large in a
+   * Tesla, where the screen is read at arm's length while driving.
+   */
+  uiScale: "auto" | "normal" | "large" | "xl";
   /** Say what's coming ("Flock camera in 400 feet") after the alert tone. */
   spokenAlerts: boolean;
   /** Basemap style key. */

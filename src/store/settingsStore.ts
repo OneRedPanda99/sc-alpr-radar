@@ -32,6 +32,7 @@ function pickSettings(s: Settings): Settings {
     alertIncidents: s.alertIncidents,
     dimHeadlights: s.dimHeadlights,
     spokenAlerts: s.spokenAlerts,
+    uiScale: s.uiScale,
     basemap: s.basemap,
     avoidFlock: s.avoidFlock,
     avoidOtherAlpr: s.avoidOtherAlpr,
