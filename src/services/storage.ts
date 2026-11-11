@@ -64,6 +64,7 @@ export const DEFAULT_SETTINGS: Settings = {
   alertUnconfirmed: true,
   alertIncidents: true,
   dimHeadlights: false,
+  sharpenFeeds: true,
   spokenAlerts: true,
   uiScale: "auto",
   basemap: "streets",

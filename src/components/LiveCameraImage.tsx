@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import type { Camera } from "@/types";
 import { useSettingsStore } from "@/store/settingsStore";
+import { lockZoomFor, noteStreamHeight } from "@/services/streamQuality";
 import {
   addMark,
   clearMarks,
@@ -24,6 +25,38 @@ import {
  * that rescues a night feed just crushes a normal daytime one.
  */
 const DIM_FILTER = "brightness(0.48) contrast(1.7) saturate(0.85)";
+
+/**
+ * A gentle sharpen (an unsharp kernel well short of the usual 5/-1), since
+ * a strong one just amplifies the compression blocks in these low-bitrate
+ * streams. Defined once as an SVG filter so CSS can apply it to any player.
+ */
+const SHARPEN_ID = "feed-sharpen";
+function ensureSharpenFilter() {
+  if (document.getElementById(SHARPEN_ID)) return;
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("width", "0");
+  svg.setAttribute("height", "0");
+  svg.setAttribute("aria-hidden", "true");
+  svg.style.position = "absolute";
+  const filter = document.createElementNS(ns, "filter");
+  filter.id = SHARPEN_ID;
+  const m = document.createElementNS(ns, "feConvolveMatrix");
+  m.setAttribute("order", "3");
+  m.setAttribute("kernelMatrix", "0 -0.5 0 -0.5 3 -0.5 0 -0.5 0");
+  m.setAttribute("preserveAlpha", "true");
+  filter.appendChild(m);
+  svg.appendChild(filter);
+  document.body.appendChild(svg);
+}
+
+/** The CSS filter for a feed: dimmer and/or sharpen, or none. */
+function feedFilter(dim: boolean, sharpen: boolean): string | undefined {
+  if (sharpen) ensureSharpenFilter();
+  const parts = [dim ? DIM_FILTER : "", sharpen ? `url(#${SHARPEN_ID})` : ""].filter(Boolean);
+  return parts.length ? parts.join(" ") : undefined;
+}
 
 /** Snapshot refresh cadence (fallback path only). */
 const REFRESH_MS = 30_000;
@@ -56,8 +89,6 @@ export function isLiveCamera(camera: Camera): boolean {
  * first see it, less a small allowance for the camera's encoder and the CDN.
  */
 const UPSTREAM_DELAY_MS = 2000;
-/** How far the picture zooms in when it locks onto your car. */
-const LOCK_ZOOM = 2.5;
 /** One tap of "car's ahead / behind" moves the timing this much. */
 const NUDGE_MS = 500;
 
@@ -110,8 +141,11 @@ export function LiveCameraVideo({
   const clipDoneRef = useRef(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const dimHeadlights = useSettingsStore((s) => s.dimHeadlights);
+  const sharpen = useSettingsStore((s) => s.sharpenFeeds);
   const setSetting = useSettingsStore((s) => s.set);
   const [useStill, setUseStill] = useState(!camera.streamUrl);
+  /** The stream's real height in pixels (270, 360, 480…), once known. */
+  const [videoHeight, setVideoHeight] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [isFull, setIsFull] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -551,7 +585,8 @@ export function LiveCameraVideo({
       if (locking || st.active) {
         // Ease in and out, and follow with a little lag so GPS jitter
         // doesn't shake the picture.
-        st.z += ((locking ? LOCK_ZOOM : 1) - st.z) * 0.12;
+        // Zoom only as far as the stream's resolution can take.
+        st.z += ((locking ? lockZoomFor(v.videoHeight) : 1) - st.z) * 0.12;
         const tu = target?.u ?? 0.5;
         const tv = target?.v ?? 0.5;
         st.cx += (tu - st.cx) * 0.3;
@@ -728,7 +763,7 @@ export function LiveCameraVideo({
           playsInline
           autoPlay
           style={{
-            filter: dimHeadlights ? DIM_FILTER : undefined,
+            filter: feedFilter(dimHeadlights, sharpen),
             // While locked on, the per-frame loop owns the transform.
             transform: engaged ? undefined : `scale(${zoom}) translate(${pan.x}%, ${pan.y}%)`,
           }}
@@ -737,6 +772,11 @@ export function LiveCameraVideo({
             setPaused(false);
           }}
           onWaiting={() => setPlaying(false)}
+          onResize={(e) => {
+            const h = e.currentTarget.videoHeight;
+            setVideoHeight(h);
+            noteStreamHeight(camera.id, h);
+          }}
           // Track the element's real state, not just our own clicks. Autoplay can
           // be refused and a backgrounded tab can pause on its own, which
           // previously left the badge reading LIVE over a frozen frame and made
@@ -748,9 +788,17 @@ export function LiveCameraVideo({
         <div className={`live-cam-badge ${paused ? "still" : ""}`}>
           {!paused && <span className="live-dot" aria-hidden="true" />}
           {paused ? "PAUSED" : playing ? "LIVE" : "CONNECTING"}
+          {videoHeight > 0 && (
+            <span
+              className="live-cam-lag"
+              title={`This camera streams at ${videoHeight}p. SCDOT publishes one quality per camera.`}
+            >
+              {videoHeight}p
+            </span>
+          )}
           {lagMs != null && playing && !paused && (
-            <span className="live-cam-lag" title="Estimated delay behind real time">
-              {Math.round(lagMs / 1000)}s delay
+            <span className="live-cam-lag" title="About this far behind real time">
+              {Math.round(lagMs / 1000)}s
             </span>
           )}
         </div>
@@ -775,6 +823,15 @@ export function LiveCameraVideo({
             title="Headlight dimmer — cuts glare on night feeds"
           >
             Dimmer
+          </button>
+          <button
+            type="button"
+            className={`live-cam-btn ${sharpen ? "on" : ""}`}
+            onClick={() => setSetting("sharpenFeeds", !sharpen)}
+            aria-pressed={sharpen}
+            title="Sharpen: makes car outlines easier to pick out (can't add detail the camera didn't send)"
+          >
+            Sharp
           </button>
           <button
             type="button"
@@ -1003,6 +1060,7 @@ function LiveCameraStill({
   onError?: () => void;
   onFullscreen?: () => void;
 }) {
+  const sharpen = useSettingsStore((s) => s.sharpenFeeds);
   const dimHeadlights = useSettingsStore((s) => s.dimHeadlights);
   const [src, setSrc] = useState(() => `${camera.imageUrl}?t=${Date.now()}`);
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
@@ -1040,7 +1098,7 @@ function LiveCameraStill({
       <img
         src={src}
         alt={camera.name ?? "Traffic camera"}
-        style={{ filter: dimHeadlights ? DIM_FILTER : undefined }}
+        style={{ filter: feedFilter(dimHeadlights, sharpen) }}
         onLoad={() => setLoadedAt(Date.now())}
         onError={() => {
           setFailed(true);

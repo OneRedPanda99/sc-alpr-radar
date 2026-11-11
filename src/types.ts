@@ -250,6 +250,11 @@ export interface Settings {
    */
   dimHeadlights: boolean;
   /**
+   * Mild sharpening on live feeds. The streams are low-res (480x270 to
+   * 720x480); this can't add detail but makes car outlines easier to tell apart.
+   */
+  sharpenFeeds: boolean;
+  /**
    * Size of panels and buttons (never the map). "auto" picks Large in a
    * Tesla, where the screen is read at arm's length while driving.
    */

@@ -55,6 +55,7 @@ import {
 } from "@/services/routing";
 import { KIND_LABELS } from "@/services/brand";
 import { deadEndNear } from "@/services/deadEnds";
+import { probeStream, streamHeight } from "@/services/streamQuality";
 import {
   DriveRecorder,
   PASS_METERS,
@@ -582,9 +583,17 @@ export function DriveMode({
       speed: gpsSpeed ?? trackRef.current.speed(),
       route: routeMeasure,
       camMeasures,
+      heightOf: streamHeight,
     });
   }, [driving, fix, clock, routeLive, liveCams, routeMeasure, camMeasures]);
   const following = driving ? followTarget(passes, clock - lagRef.current) : null;
+  // Learn the resolution of the next few cameras (a tiny playlist read each),
+  // so a sharper camera can win when two cover the same spot.
+  useEffect(() => {
+    for (const p of passes.slice(0, 8)) {
+      if (p.cam.streamUrl) void probeStream(p.cam.id, p.cam.streamUrl);
+    }
+  }, [passes]);
 
   const feedCam =
     (pinnedFeedId && liveCams.find((c) => c.id === pinnedFeedId)) ||
