@@ -91,7 +91,9 @@ export default defineConfig({
               url.host.includes("tile") ||
               url.host.includes("openstreetmap") ||
               url.host.includes("openfreemap") ||
-              url.host.includes("carto"),
+              url.host.includes("carto") ||
+              // Satellite imagery; without this it re-downloaded every visit.
+              url.host.includes("arcgisonline"),
             handler: "CacheFirst",
             options: {
               cacheName: "basemap-tiles",

@@ -10,3 +10,4 @@ dev-dist
 !.env.example
 
 COMMIT_MSG.tmp
+public/osm/

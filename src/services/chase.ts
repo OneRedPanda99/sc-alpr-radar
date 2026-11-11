@@ -193,8 +193,10 @@ export function schedulePasses(opts: {
   speed: number | null;
   route: RouteMeasure | null;
   camMeasures: Map<string, { m: number; off: number } | null>;
+  /** Stream height in pixels, when known, to prefer the sharper of a pair. */
+  heightOf?: (camId: string) => number | undefined;
 }): ChasePass[] {
-  const { cams, track, now, here, heading, speed, route, camMeasures } = opts;
+  const { cams, track, now, here, heading, speed, route, camMeasures, heightOf } = opts;
   const hereM = route?.measure(here) ?? null;
   const onRoute = hereM != null && hereM.off < 150;
   const out: ChasePass[] = [];
@@ -233,14 +235,21 @@ export function schedulePasses(opts: {
   }
 
   out.sort((a, b) => a.at - b.at || a.along - b.along);
-  // Where SCDOT has a camera for each direction side by side, keep the one
-  // watching your side; the other would show the far lanes, if you at all.
+  // Where SCDOT has two cameras side by side, keep the one watching your
+  // side; the other would show the far lanes, if you at all. Between two that
+  // watch the same way, keep the sharper stream.
+  const better = (q: ChasePass, p: ChasePass) => {
+    if (COVER_RANK[q.cover] !== COVER_RANK[p.cover]) return COVER_RANK[q.cover] < COVER_RANK[p.cover];
+    const hq = heightOf?.(q.cam.id) ?? 0;
+    const hp = heightOf?.(p.cam.id) ?? 0;
+    return hq > hp;
+  };
   return out.filter(
     (p) =>
       !out.some(
         (q) =>
           q !== p &&
-          COVER_RANK[q.cover] < COVER_RANK[p.cover] &&
+          better(q, p) &&
           Math.abs(q.at - p.at) < 20000 &&
           haversineMeters(q.cam, p.cam) < PAIR_METERS,
       ),

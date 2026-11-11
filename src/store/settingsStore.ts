@@ -31,6 +31,7 @@ function pickSettings(s: Settings): Settings {
     alertUnconfirmed: s.alertUnconfirmed,
     alertIncidents: s.alertIncidents,
     dimHeadlights: s.dimHeadlights,
+    sharpenFeeds: s.sharpenFeeds,
     spokenAlerts: s.spokenAlerts,
     uiScale: s.uiScale,
     basemap: s.basemap,

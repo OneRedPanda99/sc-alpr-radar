@@ -28,6 +28,18 @@ jobs:
         run: npm run build
         env:
           BASE_PATH: /sc-alpr-radar/
+      # Statewide map-detail tiles from build-osm-tiles.yml. Until that has
+      # run once there's no asset, and the app falls back to live Overpass.
+      - name: Add OSM detail tiles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release download osm-tiles -p osm-tiles.tar.gz -D /tmp; then
+            mkdir -p dist/osm && tar -xzf /tmp/osm-tiles.tar.gz -C dist/osm
+            echo "Added $(find dist/osm -name '*.json' | wc -l) tile files."
+          else
+            echo "No OSM tiles published yet; skipping."
+          fi
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
