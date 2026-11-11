@@ -6,11 +6,13 @@ import { cameraColor } from "@/services/brand";
 import {
   fetchOsmDetails,
   FRIENDLY_TAGS,
+  OSM_CATEGORIES,
   OSM_CATEGORY_BY_ID,
   type Bbox,
 } from "@/services/osmDetails";
 import { fovConePolygon } from "@/services/geo";
 import { loadTiles } from "@/services/osmTiles";
+import { osmIconId, rasterizeOsmIcon } from "@/services/osmIcons";
 import { setLatestDeadEnds } from "@/services/deadEnds";
 import {
   aimBearingFor,
@@ -189,6 +191,15 @@ function symbolsToFC(
     });
   }
   return { type: "FeatureCollection", features };
+}
+
+/** Register a map-detail category's badge icon, if it has one. */
+function addOsmIcon(map: maplibregl.Map, category: string) {
+  const id = osmIconId(category);
+  if (map.hasImage(id)) return;
+  const cat = OSM_CATEGORY_BY_ID.get(category);
+  const img = cat ? rasterizeOsmIcon(category, cat.color) : null;
+  if (img) map.addImage(id, img, { pixelRatio: 2 });
 }
 
 function routeToFC(routeLine: [number, number][] | null): GeoJSON.FeatureCollection {
@@ -430,17 +441,19 @@ export function MapView({
         },
       });
 
+      // Map details draw as icon badges (traffic light, stop sign, P…) rather
+      // than plain dots. Where they'd pile up, MapLibre hides the overlap and
+      // reveals more as you zoom in.
+      for (const cat of OSM_CATEGORIES) addOsmIcon(map, cat.id);
       map.addSource(OSM_POINTS, { type: "geojson", data: EMPTY_FC });
       map.addLayer({
         id: OSM_POINTS,
-        type: "circle",
+        type: "symbol",
         source: OSM_POINTS,
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 3, 16, 6],
-          "circle-color": ["get", "color"],
-          "circle-stroke-color": "#0b1220",
-          "circle-stroke-width": 1.5,
-          "circle-opacity": 0.9,
+        layout: {
+          "icon-image": ["concat", "osm-", ["get", "category"]],
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 12, 0.6, 15, 0.82, 18, 1],
+          "icon-padding": 1,
         },
       });
       const pickOsm = (e: maplibregl.MapLayerMouseEvent) => {
@@ -693,8 +706,14 @@ export function MapView({
         // Only our emoji. The basemap asks for its own pattern images (park
         // fills and so on) too; drawing those names as text tiled "pa-pa-pa"
         // across the dark map.
+        if (map.hasImage(e.id)) return;
+        // Our map-detail badges (after a light/dark style swap drops them).
+        if (e.id.startsWith("osm-")) {
+          addOsmIcon(map, e.id.slice(4));
+          return;
+        }
         const isEmoji = [...e.id].some((ch) => ch.charCodeAt(0) > 127);
-        if (map.hasImage(e.id) || !isEmoji) return;
+        if (!isEmoji) return;
         const img = rasterizeSymbol(e.id);
         if (img) map.addImage(e.id, img, { pixelRatio: 2 });
       });

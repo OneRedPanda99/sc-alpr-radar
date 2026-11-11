@@ -2709,3 +2709,10 @@ html[data-ui="xl"] .drive-rail {
   color: var(--accent);
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
+
+/* Map-detail toggles show the same badge the map draws. */
+.layer-badge {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
