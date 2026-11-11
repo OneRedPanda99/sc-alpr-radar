@@ -1,6 +1,7 @@
 import { useSettingsStore } from "@/store/settingsStore";
 import { OSM_CATEGORIES } from "@/services/osmDetails";
 import { KIND_COLORS } from "@/services/brand";
+import { OSM_GLYPHS, glyphInk } from "@/services/osmIcons";
 import type { Settings } from "@/types";
 
 type BoolKey = {
@@ -128,7 +129,7 @@ export function LayersPanel({ onClose }: { onClose: () => void }) {
             aria-pressed={osmLayers.includes(c.id)}
             onClick={() => toggleOsm(c.id)}
           >
-            <span className="layer-dot" style={{ background: c.color }} />
+            <OsmBadge category={c.id} color={c.color} />
             {c.label}
           </button>
         ))}
@@ -142,3 +143,29 @@ export function LayersPanel({ onClose }: { onClose: () => void }) {
     </div>
   );
 }
+
+/** The same badge the map draws, so you know what you're looking for. */
+function OsmBadge({ category, color }: { category: string; color: string }) {
+  const glyph = OSM_GLYPHS[category];
+  if (!glyph) return <span className="layer-dot" style={{ background: color }} />;
+  const ink = glyphInk(color);
+  return (
+    <svg className="layer-badge" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="11.5" fill={color} />
+      <g transform="translate(4.8 4.8) scale(0.6)">
+        {glyph.fill && <path d={glyph.fill} fill={ink} />}
+        {glyph.stroke && (
+          <path
+            d={glyph.stroke}
+            fill="none"
+            stroke={ink}
+            strokeWidth={2.4}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        )}
+      </g>
+    </svg>
+  );
+}
+
